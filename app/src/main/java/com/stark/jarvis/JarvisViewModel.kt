@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.util.Calendar
 import java.util.UUID
 
 enum class ReactorMode {
@@ -68,6 +69,7 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
     private val initialApiKey = loadInitialApiKey()
     private val hasConfiguredName = prefs.contains(KEY_USER_NAME)
     private val initialUserName = prefs.getString(KEY_USER_NAME, "Sir").orEmpty().ifBlank { "Sir" }
+    private val openingTemplate = GREETING_TEMPLATES.random()
     private var greetingSpokenThisLaunch = false
 
     private val _uiState = MutableStateFlow(
@@ -87,7 +89,7 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
                 HudMessage(
                     id = ++messageCounter,
                     isUser = false,
-                    text = "Good evening, $initialUserName. All systems are online and at your disposal."
+                    text = formatGreeting(openingTemplate, initialUserName)
                 )
             )
         )
@@ -192,7 +194,7 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
     fun saveUserName(newName: String) {
         val clean = newName.trim().ifBlank { "Sir" }
         prefs.edit().putString(KEY_USER_NAME, clean).apply()
-        val greeting = "Good evening, $clean. All systems are online and at your disposal."
+        val greeting = formatGreeting(openingTemplate, clean)
         _uiState.update { state ->
             val updatedMessages = if (state.messages.size == 1 && !state.messages.first().isUser) {
                 listOf(
@@ -551,6 +553,18 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
         nanoClient.close()
     }
 
+    private fun formatGreeting(template: String, userName: String): String {
+        val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+        val timeGreeting = when {
+            hour < 12 -> "Good morning"
+            hour < 17 -> "Good afternoon"
+            else -> "Good evening"
+        }
+        return template
+            .replace("{TIME}", timeGreeting)
+            .replace("{NAME}", userName)
+    }
+
     companion object {
         private const val PREFS_NAME = "jarvis_hud_prefs"
         private const val KEY_API = "gemini_api_key"
@@ -558,5 +572,16 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
         private const val KEY_USE_NANO = "use_on_device_nano"
         private const val KEY_USER_NAME = "user_name"
         private const val KEY_SPEAK_GREETING = "speak_greeting_on_launch"
+
+        private val GREETING_TEMPLATES = listOf(
+            "{TIME}, {NAME}. All systems are online and at your disposal.",
+            "{TIME}, {NAME}. Neural cores nominal. What shall we tackle today?",
+            "{TIME}, {NAME}. Diagnostic sweep complete, and everything appears remarkably intact.",
+            "{TIME}, {NAME}. I've taken the liberty of warming up the arc reactor. How may I assist?",
+            "{TIME}, {NAME}. Power levels optimal, sensors clear. Ready when you are.",
+            "{TIME}, {NAME}. Always a pleasure. What's on the agenda?",
+            "{TIME}, {NAME}. Interface calibrated and awaiting your instructions.",
+            "{TIME}, {NAME}. Shall we build something brilliant, or merely put out a few fires?"
+        )
     }
 }

@@ -24,8 +24,8 @@ android {
         applicationId = "com.stark.jarvis"
         minSdk = 26
         targetSdk = 35
-        versionCode = 15
-        versionName = "1.15"
+        versionCode = 16
+        versionName = "1.16"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "GEMINI_API_KEY", "\"$geminiApiKey\"")
