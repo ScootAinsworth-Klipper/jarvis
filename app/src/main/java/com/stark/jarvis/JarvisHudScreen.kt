@@ -38,11 +38,13 @@ import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
@@ -126,8 +128,10 @@ fun JarvisHudScreen(viewModel: JarvisViewModel) {
                 voiceLabel = state.voiceLabel,
                 autoSpeak = state.autoSpeak,
                 hasApiKey = state.apiKey.isNotBlank(),
+                hasUpdate = state.availableUpdate != null,
                 onToggleAutoSpeak = viewModel::toggleAutoSpeak,
                 onClear = viewModel::clearSession,
+                onCheckUpdates = viewModel::openUpdateDialog,
                 onOpenSettings = { showKeyDialog = true }
             )
 
@@ -270,11 +274,26 @@ fun JarvisHudScreen(viewModel: JarvisViewModel) {
     if (showKeyDialog) {
         ApiKeyDialog(
             currentKey = state.apiKey,
+            currentGithubToken = state.githubToken,
             onDismiss = { showKeyDialog = false },
-            onSave = { newKey ->
-                viewModel.updateApiKey(newKey)
+            onSave = { newKey, newToken ->
+                viewModel.updateCredentials(newKey, newToken)
                 showKeyDialog = false
             }
+        )
+    }
+
+    if (state.showUpdateDialog) {
+        UpdateDialog(
+            currentVersion = BuildConfig.VERSION_NAME,
+            release = state.availableUpdate,
+            isChecking = state.isCheckingUpdate,
+            isDownloading = state.isDownloadingUpdate,
+            progress = state.downloadProgress,
+            message = state.updateMessage,
+            onCheckAgain = { viewModel.checkForUpdates(silent = false) },
+            onInstall = viewModel::installAvailableUpdate,
+            onDismiss = viewModel::dismissUpdateDialog
         )
     }
 }
@@ -303,8 +322,10 @@ private fun HudHeader(
     voiceLabel: String,
     autoSpeak: Boolean,
     hasApiKey: Boolean,
+    hasUpdate: Boolean,
     onToggleAutoSpeak: () -> Unit,
     onClear: () -> Unit,
+    onCheckUpdates: () -> Unit,
     onOpenSettings: () -> Unit
 ) {
     Surface(
@@ -319,7 +340,7 @@ private fun HudHeader(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "J.A.R.V.I.S. // HUD",
+                    text = "J.A.R.V.I.S. // v${BuildConfig.VERSION_NAME}",
                     color = HudCyan,
                     fontWeight = FontWeight.Bold,
                     fontSize = 15.sp,
@@ -355,10 +376,18 @@ private fun HudHeader(
                 )
             }
 
+            IconButton(onClick = onCheckUpdates) {
+                Icon(
+                    imageVector = Icons.Default.SystemUpdate,
+                    contentDescription = "Check for updates",
+                    tint = if (hasUpdate) Color(0xFF00FFCC) else HudCyan
+                )
+            }
+
             IconButton(onClick = onOpenSettings) {
                 Icon(
                     imageVector = Icons.Default.Key,
-                    contentDescription = "Gemini API Key",
+                    contentDescription = "Credentials",
                     tint = if (hasApiKey) HudCyan else Color(0xFFFFB74D)
                 )
             }
@@ -472,10 +501,12 @@ private fun PushToTalkButton(
 @Composable
 private fun ApiKeyDialog(
     currentKey: String,
+    currentGithubToken: String,
     onDismiss: () -> Unit,
-    onSave: (String) -> Unit
+    onSave: (String, String) -> Unit
 ) {
-    var draft by remember(currentKey) { mutableStateOf(currentKey) }
+    var draftKey by remember(currentKey) { mutableStateOf(currentKey) }
+    var draftToken by remember(currentGithubToken) { mutableStateOf(currentGithubToken) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -484,7 +515,7 @@ private fun ApiKeyDialog(
         textContentColor = HudText,
         title = {
             Text(
-                "GEMINI CORE API KEY",
+                "HUD CREDENTIALS",
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.Bold,
                 fontSize = 16.sp
@@ -493,15 +524,29 @@ private fun ApiKeyDialog(
         text = {
             Column {
                 Text(
-                    "Provide your Google Gemini API key to link J.A.R.V.I.S. to the Gemini neural core.",
-                    fontSize = 13.sp,
+                    "Gemini API key is required for J.A.R.V.I.S. responses. GitHub token is optional and used for in-app updates from your private repo.",
+                    fontSize = 12.sp,
                     color = HudText.copy(alpha = 0.85f)
                 )
                 Spacer(modifier = Modifier.height(10.dp))
                 OutlinedTextField(
-                    value = draft,
-                    onValueChange = { draft = it },
-                    label = { Text("API Key", color = HudCyan) },
+                    value = draftKey,
+                    onValueChange = { draftKey = it },
+                    label = { Text("Gemini API Key", color = HudCyan) },
+                    singleLine = true,
+                    visualTransformation = PasswordVisualTransformation(),
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = HudText,
+                        unfocusedTextColor = HudText,
+                        focusedBorderColor = HudCyan,
+                        unfocusedBorderColor = HudCyanDim
+                    )
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = draftToken,
+                    onValueChange = { draftToken = it },
+                    label = { Text("GitHub Token (for updates)", color = HudCyan) },
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                     colors = OutlinedTextFieldDefaults.colors(
@@ -515,7 +560,7 @@ private fun ApiKeyDialog(
         },
         confirmButton = {
             Button(
-                onClick = { onSave(draft) },
+                onClick = { onSave(draftKey, draftToken) },
                 colors = ButtonDefaults.buttonColors(containerColor = HudCyan, contentColor = HudBg)
             ) {
                 Text("SAVE", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
@@ -524,6 +569,96 @@ private fun ApiKeyDialog(
         dismissButton = {
             TextButton(onClick = onDismiss) {
                 Text("CANCEL", color = HudCyan, fontFamily = FontFamily.Monospace)
+            }
+        }
+    )
+}
+
+@Composable
+private fun UpdateDialog(
+    currentVersion: String,
+    release: AppReleaseInfo?,
+    isChecking: Boolean,
+    isDownloading: Boolean,
+    progress: Float,
+    message: String?,
+    onCheckAgain: () -> Unit,
+    onInstall: () -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = { if (!isDownloading) onDismiss() },
+        containerColor = HudPanel,
+        titleContentColor = HudCyan,
+        textContentColor = HudText,
+        title = {
+            Text(
+                "SYSTEM UPDATE // v$currentVersion",
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold,
+                fontSize = 15.sp
+            )
+        },
+        text = {
+            Column {
+                if (message != null) {
+                    Text(
+                        text = message,
+                        fontSize = 13.sp,
+                        color = HudText
+                    )
+                }
+                if (release != null) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = release.releaseNotes,
+                        fontSize = 12.sp,
+                        color = HudText.copy(alpha = 0.8f)
+                    )
+                }
+                if (isDownloading) {
+                    Spacer(modifier = Modifier.height(12.dp))
+                    LinearProgressIndicator(
+                        progress = { progress },
+                        color = HudCyan,
+                        trackColor = HudCyanDim,
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            if (release != null) {
+                Button(
+                    onClick = onInstall,
+                    enabled = !isDownloading,
+                    colors = ButtonDefaults.buttonColors(containerColor = HudCyan, contentColor = HudBg)
+                ) {
+                    Text(
+                        if (isDownloading) "DOWNLOADING..." else "DOWNLOAD & INSTALL",
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            } else {
+                Button(
+                    onClick = onCheckAgain,
+                    enabled = !isChecking,
+                    colors = ButtonDefaults.buttonColors(containerColor = HudCyan, contentColor = HudBg)
+                ) {
+                    Text(
+                        if (isChecking) "SCANNING..." else "CHECK NOW",
+                        fontFamily = FontFamily.Monospace,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        },
+        dismissButton = {
+            if (!isDownloading) {
+                TextButton(onClick = onDismiss) {
+                    Text("CLOSE", color = HudCyan, fontFamily = FontFamily.Monospace)
+                }
             }
         }
     )

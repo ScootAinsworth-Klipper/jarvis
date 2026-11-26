@@ -32,14 +32,22 @@ data class JarvisUiState(
     val voiceLabel: String = "EN-GB",
     val statusText: String = "CORE ONLINE // AWAITING COMMAND",
     val apiKey: String = "",
+    val githubToken: String = "",
     val autoSpeak: Boolean = true,
-    val isThinking: Boolean = false
+    val isThinking: Boolean = false,
+    val availableUpdate: AppReleaseInfo? = null,
+    val isCheckingUpdate: Boolean = false,
+    val isDownloadingUpdate: Boolean = false,
+    val downloadProgress: Float = 0f,
+    val updateMessage: String? = null,
+    val showUpdateDialog: Boolean = false
 )
 
 class JarvisViewModel(application: Application) : AndroidViewModel(application) {
 
     private val prefs = application.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     private val geminiClient = GeminiClient()
+    private val appUpdater = AppUpdater(application)
     private var previousInteractionId: String? = null
     private var messageCounter = 0L
 
@@ -48,6 +56,7 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
     private val _uiState = MutableStateFlow(
         JarvisUiState(
             apiKey = loadInitialApiKey(),
+            githubToken = prefs.getString(KEY_GITHUB_TOKEN, "").orEmpty(),
             messages = listOf(
                 HudMessage(
                     id = ++messageCounter,
@@ -112,6 +121,9 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
                 }
             }
         }
+        if (_uiState.value.githubToken.isNotBlank()) {
+            checkForUpdates(silent = true)
+        }
     }
 
     private fun loadInitialApiKey(): String {
@@ -119,10 +131,110 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
         return saved.ifBlank { BuildConfig.GEMINI_API_KEY }
     }
 
-    fun updateApiKey(newKey: String) {
-        val trimmed = newKey.trim()
-        prefs.edit().putString(KEY_API, trimmed).apply()
-        _uiState.update { it.copy(apiKey = trimmed) }
+    fun updateCredentials(newApiKey: String, newGithubToken: String) {
+        val trimmedKey = newApiKey.trim()
+        val trimmedToken = newGithubToken.trim()
+        prefs.edit()
+            .putString(KEY_API, trimmedKey)
+            .putString(KEY_GITHUB_TOKEN, trimmedToken)
+            .apply()
+        _uiState.update { it.copy(apiKey = trimmedKey, githubToken = trimmedToken) }
+        if (trimmedToken.isNotEmpty()) {
+            checkForUpdates(silent = true)
+        }
+    }
+
+    fun openUpdateDialog() {
+        _uiState.update { it.copy(showUpdateDialog = true) }
+        if (_uiState.value.availableUpdate == null && !_uiState.value.isCheckingUpdate) {
+            checkForUpdates(silent = false)
+        }
+    }
+
+    fun dismissUpdateDialog() {
+        _uiState.update { it.copy(showUpdateDialog = false) }
+    }
+
+    fun checkForUpdates(silent: Boolean = false) {
+        if (_uiState.value.isCheckingUpdate || _uiState.value.isDownloadingUpdate) return
+        _uiState.update {
+            it.copy(
+                isCheckingUpdate = true,
+                updateMessage = if (silent) it.updateMessage else "Scanning GitHub releases..."
+            )
+        }
+        viewModelScope.launch {
+            val result = appUpdater.checkForUpdate(_uiState.value.githubToken)
+            result.onSuccess { release ->
+                _uiState.update {
+                    it.copy(
+                        isCheckingUpdate = false,
+                        availableUpdate = release,
+                        showUpdateDialog = if (release != null) true else it.showUpdateDialog,
+                        updateMessage = if (release != null) {
+                            "Version v${release.versionName} is available."
+                        } else if (!silent) {
+                            "J.A.R.V.I.S. is up to date (v${BuildConfig.VERSION_NAME})."
+                        } else {
+                            null
+                        }
+                    )
+                }
+            }.onFailure { err ->
+                _uiState.update {
+                    it.copy(
+                        isCheckingUpdate = false,
+                        updateMessage = if (silent) null else (err.message ?: "Update check failed.")
+                    )
+                }
+            }
+        }
+    }
+
+    fun installAvailableUpdate() {
+        val release = _uiState.value.availableUpdate ?: return
+        if (!appUpdater.canInstallPackages()) {
+            _uiState.update {
+                it.copy(
+                    updateMessage = "Enable 'Allow from this source' in Android Settings, then tap Install again."
+                )
+            }
+            appUpdater.launchInstallPermissionSettings()
+            return
+        }
+
+        _uiState.update {
+            it.copy(
+                isDownloadingUpdate = true,
+                downloadProgress = 0f,
+                updateMessage = "Downloading v${release.versionName}..."
+            )
+        }
+        viewModelScope.launch {
+            val result = appUpdater.downloadUpdateApk(
+                release = release,
+                githubToken = _uiState.value.githubToken,
+                onProgress = { progress ->
+                    _uiState.update { it.copy(downloadProgress = progress) }
+                }
+            )
+            result.onSuccess { apkFile ->
+                _uiState.update {
+                    it.copy(
+                        isDownloadingUpdate = false,
+                        updateMessage = "Launching Android installer..."
+                    )
+                }
+                appUpdater.launchApkInstaller(apkFile)
+            }.onFailure { err ->
+                _uiState.update {
+                    it.copy(
+                        isDownloadingUpdate = false,
+                        updateMessage = err.message ?: "Download failed."
+                    )
+                }
+            }
+        }
     }
 
     fun toggleAutoSpeak() {
@@ -227,5 +339,6 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
     companion object {
         private const val PREFS_NAME = "jarvis_hud_prefs"
         private const val KEY_API = "gemini_api_key"
+        private const val KEY_GITHUB_TOKEN = "github_token"
     }
 }
