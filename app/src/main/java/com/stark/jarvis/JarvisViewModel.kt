@@ -2,6 +2,7 @@ package com.stark.jarvis
 
 import android.app.Application
 import android.content.Context
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -277,6 +278,7 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
 
     fun submitPrompt(prompt: String) {
         val clean = prompt.trim()
+        Log.d("JARVIS", "submitPrompt: '$clean', isThinking=${_isThinking.value}, keyLen=${_uiState.value.apiKey.length}")
         if (clean.isEmpty() || _isThinking.value) return
 
         voiceManager.stopSpeaking()
@@ -301,6 +303,7 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
             _isThinking.value = false
 
             result.onSuccess { reply ->
+                Log.d("JARVIS", "Gemini onSuccess: '${reply.text.take(60)}'")
                 if (!reply.interactionId.isNullOrBlank()) {
                     previousInteractionId = reply.interactionId
                 }
@@ -317,6 +320,7 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
                     voiceManager.speak(reply.text)
                 }
             }.onFailure { error ->
+                Log.e("JARVIS", "Gemini onFailure", error)
                 val errorText = error.message ?: "Unable to reach Gemini core, Sir."
                 _uiState.update {
                     it.copy(

@@ -8,10 +8,13 @@ import android.provider.Settings
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import okhttp3.Dns
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
 import java.io.File
+import java.net.Inet4Address
+import java.net.InetAddress
 import java.util.concurrent.TimeUnit
 
 data class AppReleaseInfo(
@@ -24,7 +27,16 @@ data class AppReleaseInfo(
 
 class AppUpdater(private val context: Context) {
 
+    private val ipv4FirstDns = object : Dns {
+        override fun lookup(hostname: String): List<InetAddress> {
+            val all = Dns.SYSTEM.lookup(hostname)
+            val ipv4 = all.filterIsInstance<Inet4Address>()
+            return ipv4.ifEmpty { all }
+        }
+    }
+
     private val client = OkHttpClient.Builder()
+        .dns(ipv4FirstDns)
         .connectTimeout(20, TimeUnit.SECONDS)
         .readTimeout(60, TimeUnit.SECONDS)
         .build()
