@@ -92,7 +92,7 @@ fun ArcReactorView(
 
     Box(
         modifier = modifier
-            .size(210.dp)
+            .size(320.dp)
             .clipToBounds(),
         contentAlignment = Alignment.Center
     ) {
