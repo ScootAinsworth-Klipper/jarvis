@@ -51,6 +51,8 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
+import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -332,9 +334,10 @@ fun JarvisHudScreen(viewModel: JarvisViewModel) {
             currentUserName = state.userName,
             currentKey = state.apiKey,
             currentGithubToken = state.githubToken,
+            currentSpeakGreeting = state.speakGreetingOnLaunch,
             onDismiss = { showKeyDialog = false },
-            onSave = { newName, newKey, newToken ->
-                viewModel.updateCredentials(newName, newKey, newToken)
+            onSave = { newName, newKey, newToken, newSpeakGreeting ->
+                viewModel.updateCredentials(newName, newKey, newToken, newSpeakGreeting)
                 showKeyDialog = false
             }
         )
@@ -759,12 +762,14 @@ private fun ApiKeyDialog(
     currentUserName: String,
     currentKey: String,
     currentGithubToken: String,
+    currentSpeakGreeting: Boolean,
     onDismiss: () -> Unit,
-    onSave: (String, String, String) -> Unit
+    onSave: (String, String, String, Boolean) -> Unit
 ) {
     var draftName by remember(currentUserName) { mutableStateOf(currentUserName) }
     var draftKey by remember(currentKey) { mutableStateOf(currentKey) }
     var draftToken by remember(currentGithubToken) { mutableStateOf(currentGithubToken) }
+    var draftSpeakGreeting by remember(currentSpeakGreeting) { mutableStateOf(currentSpeakGreeting) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -793,6 +798,28 @@ private fun ApiKeyDialog(
                         unfocusedBorderColor = HudCyanDim
                     )
                 )
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Speak Opening Greeting",
+                        color = HudText,
+                        fontSize = 13.sp,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Switch(
+                        checked = draftSpeakGreeting,
+                        onCheckedChange = { draftSpeakGreeting = it },
+                        colors = SwitchDefaults.colors(
+                            checkedThumbColor = HudBg,
+                            checkedTrackColor = HudCyan,
+                            uncheckedThumbColor = HudCyan,
+                            uncheckedTrackColor = HudPanel
+                        )
+                    )
+                }
                 Spacer(modifier = Modifier.height(10.dp))
                 Text(
                     "Gemini API key is optional when using on-device NANO mode.",
@@ -831,7 +858,7 @@ private fun ApiKeyDialog(
         },
         confirmButton = {
             Button(
-                onClick = { onSave(draftName, draftKey, draftToken) },
+                onClick = { onSave(draftName, draftKey, draftToken, draftSpeakGreeting) },
                 colors = ButtonDefaults.buttonColors(containerColor = HudCyan, contentColor = HudBg)
             ) {
                 Text("SAVE", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)

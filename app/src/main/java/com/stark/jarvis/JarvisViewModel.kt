@@ -41,6 +41,7 @@ data class JarvisUiState(
     val githubToken: String = "",
     val useOnDeviceNano: Boolean = false,
     val autoSpeak: Boolean = true,
+    val speakGreetingOnLaunch: Boolean = true,
     val isThinking: Boolean = false,
     val availableUpdate: AppReleaseInfo? = null,
     val isCheckingUpdate: Boolean = false,
@@ -67,6 +68,7 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
     private val initialApiKey = loadInitialApiKey()
     private val hasConfiguredName = prefs.contains(KEY_USER_NAME)
     private val initialUserName = prefs.getString(KEY_USER_NAME, "Sir").orEmpty().ifBlank { "Sir" }
+    private var greetingSpokenThisLaunch = false
 
     private val _uiState = MutableStateFlow(
         JarvisUiState(
@@ -75,6 +77,7 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
             userName = initialUserName,
             showNamePrompt = !hasConfiguredName,
             savedChats = historyStore.loadSessions(),
+            speakGreetingOnLaunch = prefs.getBoolean(KEY_SPEAK_GREETING, true),
             useOnDeviceNano = if (prefs.contains(KEY_USE_NANO)) {
                 prefs.getBoolean(KEY_USE_NANO, false)
             } else {
@@ -91,7 +94,7 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
     )
     val uiState: StateFlow<JarvisUiState> = _uiState.asStateFlow()
 
-    val voiceManager = JarvisVoiceManager(
+    val voiceManager: JarvisVoiceManager = JarvisVoiceManager(
         context = application,
         onSpeechResult = { spokenText ->
             _speechError.value = null
@@ -99,6 +102,19 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
         },
         onSpeechError = { err ->
             _speechError.value = err.uppercase()
+        },
+        onTtsReady = {
+            val state = _uiState.value
+            if (!greetingSpokenThisLaunch &&
+                !state.showNamePrompt &&
+                state.speakGreetingOnLaunch &&
+                state.autoSpeak
+            ) {
+                greetingSpokenThisLaunch = true
+                state.messages.firstOrNull()?.text?.let { greeting ->
+                    voiceManager.speak(greeting)
+                }
+            }
         }
     )
 
@@ -176,13 +192,14 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
     fun saveUserName(newName: String) {
         val clean = newName.trim().ifBlank { "Sir" }
         prefs.edit().putString(KEY_USER_NAME, clean).apply()
+        val greeting = "Good evening, $clean. All systems are online and at your disposal."
         _uiState.update { state ->
             val updatedMessages = if (state.messages.size == 1 && !state.messages.first().isUser) {
                 listOf(
                     HudMessage(
                         id = state.messages.first().id,
                         isUser = false,
-                        text = "Good evening, $clean. All systems are online and at your disposal."
+                        text = greeting
                     )
                 )
             } else {
@@ -194,6 +211,10 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
                 messages = updatedMessages
             )
         }
+        if (!greetingSpokenThisLaunch && _uiState.value.speakGreetingOnLaunch && _uiState.value.autoSpeak) {
+            greetingSpokenThisLaunch = true
+            voiceManager.speak(greeting)
+        }
     }
 
     fun dismissNamePrompt() {
@@ -201,9 +222,18 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
             prefs.edit().putString(KEY_USER_NAME, "Sir").apply()
         }
         _uiState.update { it.copy(showNamePrompt = false) }
+        if (!greetingSpokenThisLaunch && _uiState.value.speakGreetingOnLaunch && _uiState.value.autoSpeak) {
+            greetingSpokenThisLaunch = true
+            _uiState.value.messages.firstOrNull()?.text?.let { voiceManager.speak(it) }
+        }
     }
 
-    fun updateCredentials(newUserName: String, newApiKey: String, newGithubToken: String) {
+    fun updateCredentials(
+        newUserName: String,
+        newApiKey: String,
+        newGithubToken: String,
+        newSpeakGreeting: Boolean
+    ) {
         val cleanName = newUserName.trim().ifBlank { "Sir" }
         val trimmedKey = newApiKey.trim()
         val trimmedToken = newGithubToken.trim()
@@ -211,12 +241,14 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
             .putString(KEY_USER_NAME, cleanName)
             .putString(KEY_API, trimmedKey)
             .putString(KEY_GITHUB_TOKEN, trimmedToken)
+            .putBoolean(KEY_SPEAK_GREETING, newSpeakGreeting)
             .apply()
         _uiState.update {
             it.copy(
                 userName = cleanName,
                 apiKey = trimmedKey,
-                githubToken = trimmedToken
+                githubToken = trimmedToken,
+                speakGreetingOnLaunch = newSpeakGreeting
             )
         }
         if (trimmedToken.isNotEmpty()) {
@@ -525,5 +557,6 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
         private const val KEY_GITHUB_TOKEN = "github_token"
         private const val KEY_USE_NANO = "use_on_device_nano"
         private const val KEY_USER_NAME = "user_name"
+        private const val KEY_SPEAK_GREETING = "speak_greeting_on_launch"
     }
 }

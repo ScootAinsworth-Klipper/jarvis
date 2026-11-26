@@ -9,6 +9,7 @@ import android.speech.SpeechRecognizer
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.speech.tts.Voice
+import android.util.Log
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -18,7 +19,8 @@ import java.util.UUID
 class JarvisVoiceManager(
     context: Context,
     private val onSpeechResult: (String) -> Unit,
-    private val onSpeechError: (String) -> Unit
+    private val onSpeechError: (String) -> Unit,
+    private val onTtsReady: () -> Unit = {}
 ) : TextToSpeech.OnInitListener {
 
     private val appContext = context.applicationContext
@@ -85,6 +87,7 @@ class JarvisVoiceManager(
             }
         })
         ttsReady = true
+        onTtsReady()
     }
 
     private fun selectBritishMaleVoice(engine: TextToSpeech): Voice? {
@@ -127,16 +130,19 @@ class JarvisVoiceManager(
 
         _isListening.value = true
         _audioLevel.value = 0.15f
+        Log.d("JARVIS", "startListening() called")
         speechRecognizer?.startListening(intent)
     }
 
     fun stopListening() {
+        Log.d("JARVIS", "stopListening() called, isListening=${_isListening.value}")
         if (_isListening.value) {
             speechRecognizer?.stopListening()
         }
     }
 
     fun speak(text: String) {
+        Log.d("JARVIS", "speak() called, ttsReady=$ttsReady, len=${text.length}")
         if (!ttsReady) return
         val cleanText = text
             .replace("*", "")
@@ -186,6 +192,7 @@ class JarvisVoiceManager(
         }
 
         override fun onError(error: Int) {
+            Log.e("JARVIS", "SpeechRecognizer.onError($error), partial='${_partialTranscript.value}'")
             _isListening.value = false
             _audioLevel.value = 0f
             val partial = _partialTranscript.value.trim()
@@ -215,6 +222,7 @@ class JarvisVoiceManager(
             _audioLevel.value = 0f
             val matches = results?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
             val text = matches?.firstOrNull()?.trim().orEmpty()
+            Log.d("JARVIS", "SpeechRecognizer.onResults: '$text'")
             if (text.isNotEmpty() && text != lastSubmittedText) {
                 lastSubmittedText = text
                 _partialTranscript.value = ""
