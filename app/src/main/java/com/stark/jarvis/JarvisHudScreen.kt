@@ -8,6 +8,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -358,91 +359,105 @@ private fun HudHeader(
         border = BorderStroke(1.dp, HudCyan.copy(alpha = 0.35f)),
         modifier = Modifier.fillMaxWidth()
     ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "J.A.R.V.I.S. v${BuildConfig.VERSION_NAME}",
+                    color = HudCyan,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 14.sp,
+                    maxLines = 1,
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier.weight(1f)
+                )
+
+                IconButton(onClick = onToggleAutoSpeak, modifier = Modifier.size(34.dp)) {
+                    Icon(
+                        imageVector = if (autoSpeak) Icons.AutoMirrored.Filled.VolumeUp else Icons.AutoMirrored.Filled.VolumeOff,
+                        contentDescription = "Toggle voice output",
+                        tint = if (autoSpeak) HudCyan else Color.Gray,
+                        modifier = Modifier.size(19.dp)
+                    )
+                }
+
+                IconButton(onClick = onClear, modifier = Modifier.size(34.dp)) {
+                    Icon(
+                        imageVector = Icons.Default.Refresh,
+                        contentDescription = "Reset session",
+                        tint = HudCyan,
+                        modifier = Modifier.size(19.dp)
+                    )
+                }
+
+                IconButton(onClick = onCheckUpdates, modifier = Modifier.size(34.dp)) {
+                    Icon(
+                        imageVector = Icons.Default.SystemUpdate,
+                        contentDescription = "Check for updates",
+                        tint = if (hasUpdate) Color(0xFF00FFCC) else HudCyan,
+                        modifier = Modifier.size(19.dp)
+                    )
+                }
+
+                IconButton(onClick = onOpenSettings, modifier = Modifier.size(34.dp)) {
+                    Icon(
+                        imageVector = Icons.Default.Key,
+                        contentDescription = "Credentials",
+                        tint = if (hasApiKey) HudCyan else Color(0xFFFFB74D),
+                        modifier = Modifier.size(19.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(if (useOnDeviceNano) Color(0xFF004D40) else HudCyanDim.copy(alpha = 0.65f))
+                        .border(
+                            1.dp,
+                            if (useOnDeviceNano) Color(0xFF00FFCC) else HudCyan.copy(alpha = 0.75f),
+                            RoundedCornerShape(6.dp)
+                        )
+                        .clickable(onClick = onToggleEngine)
+                        .padding(horizontal = 8.dp, vertical = 3.dp)
+                ) {
                     Text(
-                        text = "J.A.R.V.I.S. v${BuildConfig.VERSION_NAME}",
-                        color = HudCyan,
+                        text = if (useOnDeviceNano) "NANO (LOCAL)" else "CLOUD API",
+                        color = if (useOnDeviceNano) Color(0xFF00FFCC) else HudCyan,
+                        fontSize = 10.sp,
                         fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp,
-                        maxLines = 1,
                         fontFamily = FontFamily.Monospace
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Surface(
-                        onClick = onToggleEngine,
-                        color = if (useOnDeviceNano) Color(0xFF004D40) else HudCyanDim.copy(alpha = 0.6f),
-                        shape = RoundedCornerShape(6.dp),
-                        border = BorderStroke(
-                            1.dp,
-                            if (useOnDeviceNano) Color(0xFF00FFCC) else HudCyan.copy(alpha = 0.6f)
-                        )
-                    ) {
-                        Text(
-                            text = if (useOnDeviceNano) "NANO" else "CLOUD",
-                            color = if (useOnDeviceNano) Color(0xFF00FFCC) else HudCyan,
-                            fontSize = 9.sp,
-                            fontWeight = FontWeight.Bold,
-                            fontFamily = FontFamily.Monospace,
-                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
-                        )
-                    }
                 }
+
                 Text(
                     text = statusText,
-                    color = HudText.copy(alpha = 0.78f),
+                    color = HudText.copy(alpha = 0.8f),
                     fontSize = 10.sp,
                     maxLines = 1,
-                    fontFamily = FontFamily.Monospace
-                )
-                Text(
-                    text = "TTS: $voiceLabel",
-                    color = HudCyan.copy(alpha = 0.65f),
-                    fontSize = 9.sp,
-                    maxLines = 1,
-                    fontFamily = FontFamily.Monospace
+                    fontFamily = FontFamily.Monospace,
+                    modifier = Modifier.weight(1f)
                 )
             }
 
-            IconButton(onClick = onToggleAutoSpeak, modifier = Modifier.size(36.dp)) {
-                Icon(
-                    imageVector = if (autoSpeak) Icons.AutoMirrored.Filled.VolumeUp else Icons.AutoMirrored.Filled.VolumeOff,
-                    contentDescription = "Toggle voice output",
-                    tint = if (autoSpeak) HudCyan else Color.Gray,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
+            Spacer(modifier = Modifier.height(2.dp))
 
-            IconButton(onClick = onClear, modifier = Modifier.size(36.dp)) {
-                Icon(
-                    imageVector = Icons.Default.Refresh,
-                    contentDescription = "Reset session",
-                    tint = HudCyan,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-
-            IconButton(onClick = onCheckUpdates, modifier = Modifier.size(36.dp)) {
-                Icon(
-                    imageVector = Icons.Default.SystemUpdate,
-                    contentDescription = "Check for updates",
-                    tint = if (hasUpdate) Color(0xFF00FFCC) else HudCyan,
-                    modifier = Modifier.size(20.dp)
-                )
-            }
-
-            IconButton(onClick = onOpenSettings, modifier = Modifier.size(36.dp)) {
-                Icon(
-                    imageVector = Icons.Default.Key,
-                    contentDescription = "Credentials",
-                    tint = if (hasApiKey) HudCyan else Color(0xFFFFB74D),
-                    modifier = Modifier.size(20.dp)
-                )
-            }
+            Text(
+                text = "TTS: $voiceLabel",
+                color = HudCyan.copy(alpha = 0.65f),
+                fontSize = 9.sp,
+                maxLines = 1,
+                fontFamily = FontFamily.Monospace
+            )
         }
     }
 }
