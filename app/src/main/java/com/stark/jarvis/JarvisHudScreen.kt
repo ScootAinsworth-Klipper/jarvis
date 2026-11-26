@@ -130,9 +130,11 @@ fun JarvisHudScreen(viewModel: JarvisViewModel) {
             HudHeader(
                 statusText = state.statusText,
                 voiceLabel = state.voiceLabel,
+                useOnDeviceNano = state.useOnDeviceNano,
                 autoSpeak = state.autoSpeak,
                 hasApiKey = state.apiKey.isNotBlank(),
                 hasUpdate = state.availableUpdate != null,
+                onToggleEngine = viewModel::toggleInferenceEngine,
                 onToggleAutoSpeak = viewModel::toggleAutoSpeak,
                 onClear = viewModel::clearSession,
                 onCheckUpdates = viewModel::openUpdateDialog,
@@ -340,9 +342,11 @@ private fun HudGridBackdrop() {
 private fun HudHeader(
     statusText: String,
     voiceLabel: String,
+    useOnDeviceNano: Boolean,
     autoSpeak: Boolean,
     hasApiKey: Boolean,
     hasUpdate: Boolean,
+    onToggleEngine: () -> Unit,
     onToggleAutoSpeak: () -> Unit,
     onClear: () -> Unit,
     onCheckUpdates: () -> Unit,
@@ -359,14 +363,35 @@ private fun HudHeader(
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = "J.A.R.V.I.S. v${BuildConfig.VERSION_NAME}",
-                    color = HudCyan,
-                    fontWeight = FontWeight.Bold,
-                    fontSize = 14.sp,
-                    maxLines = 1,
-                    fontFamily = FontFamily.Monospace
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "J.A.R.V.I.S. v${BuildConfig.VERSION_NAME}",
+                        color = HudCyan,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 14.sp,
+                        maxLines = 1,
+                        fontFamily = FontFamily.Monospace
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Surface(
+                        onClick = onToggleEngine,
+                        color = if (useOnDeviceNano) Color(0xFF004D40) else HudCyanDim.copy(alpha = 0.6f),
+                        shape = RoundedCornerShape(6.dp),
+                        border = BorderStroke(
+                            1.dp,
+                            if (useOnDeviceNano) Color(0xFF00FFCC) else HudCyan.copy(alpha = 0.6f)
+                        )
+                    ) {
+                        Text(
+                            text = if (useOnDeviceNano) "NANO" else "CLOUD",
+                            color = if (useOnDeviceNano) Color(0xFF00FFCC) else HudCyan,
+                            fontSize = 9.sp,
+                            fontWeight = FontWeight.Bold,
+                            fontFamily = FontFamily.Monospace,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                        )
+                    }
+                }
                 Text(
                     text = statusText,
                     color = HudText.copy(alpha = 0.78f),

@@ -34,6 +34,7 @@ data class JarvisUiState(
     val statusText: String = "CORE ONLINE // AWAITING COMMAND",
     val apiKey: String = "",
     val githubToken: String = "",
+    val useOnDeviceNano: Boolean = false,
     val autoSpeak: Boolean = true,
     val isThinking: Boolean = false,
     val availableUpdate: AppReleaseInfo? = null,
@@ -48,6 +49,7 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
 
     private val prefs = application.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     private val geminiClient = GeminiClient()
+    private val nanoClient = NanoClient()
     private val appUpdater = AppUpdater(application)
     private var previousInteractionId: String? = null
     private var messageCounter = 0L
@@ -58,6 +60,7 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
         JarvisUiState(
             apiKey = loadInitialApiKey(),
             githubToken = prefs.getString(KEY_GITHUB_TOKEN, "").orEmpty(),
+            useOnDeviceNano = prefs.getBoolean(KEY_USE_NANO, false),
             messages = listOf(
                 HudMessage(
                     id = ++messageCounter,
@@ -82,7 +85,7 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
 
     init {
         viewModelScope.launch {
-            combine(
+            combine<Any?, Triple<ReactorMode, Float, Pair<String, String>>>(
                 voiceManager.isListening,
                 _isThinking,
                 voiceManager.isSpeaking,
@@ -246,6 +249,21 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
         _uiState.update { it.copy(autoSpeak = next) }
     }
 
+    fun toggleInferenceEngine() {
+        val next = !_uiState.value.useOnDeviceNano
+        prefs.edit().putBoolean(KEY_USE_NANO, next).apply()
+        _uiState.update {
+            it.copy(
+                useOnDeviceNano = next,
+                statusText = if (next) {
+                    "ENGINE: ON-DEVICE GEMINI NANO"
+                } else {
+                    "ENGINE: CLOUD GEMINI API"
+                }
+            )
+        }
+    }
+
     fun startPushToTalk() {
         _speechError.value = null
         voiceManager.startListening()
@@ -295,6 +313,46 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
 
         _isThinking.value = true
         viewModelScope.launch {
+            val useNano = _uiState.value.useOnDeviceNano
+            if (useNano) {
+                val nanoResult = nanoClient.sendMessage(
+                    userMessage = clean,
+                    recentHistory = _uiState.value.messages,
+                    onStatus = { status ->
+                        _uiState.update { it.copy(statusText = status) }
+                    }
+                )
+                _isThinking.value = false
+                nanoResult.onSuccess { replyText ->
+                    Log.d("JARVIS", "Nano onSuccess: '${replyText.take(60)}'")
+                    _uiState.update {
+                        it.copy(
+                            messages = it.messages + HudMessage(
+                                id = ++messageCounter,
+                                isUser = false,
+                                text = replyText
+                            )
+                        )
+                    }
+                    if (_uiState.value.autoSpeak) {
+                        voiceManager.speak(replyText)
+                    }
+                }.onFailure { error ->
+                    Log.e("JARVIS", "Nano onFailure", error)
+                    val errorText = error.message ?: "On-device Gemini Nano failed, Sir."
+                    _uiState.update {
+                        it.copy(
+                            messages = it.messages + HudMessage(
+                                id = ++messageCounter,
+                                isUser = false,
+                                text = "Apologies, Sir. $errorText"
+                            )
+                        )
+                    }
+                }
+                return@launch
+            }
+
             val result = geminiClient.sendMessage(
                 apiKey = _uiState.value.apiKey,
                 userMessage = clean,
@@ -338,11 +396,13 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
     override fun onCleared() {
         super.onCleared()
         voiceManager.release()
+        nanoClient.close()
     }
 
     companion object {
         private const val PREFS_NAME = "jarvis_hud_prefs"
         private const val KEY_API = "gemini_api_key"
         private const val KEY_GITHUB_TOKEN = "github_token"
+        private const val KEY_USE_NANO = "use_on_device_nano"
     }
 }
