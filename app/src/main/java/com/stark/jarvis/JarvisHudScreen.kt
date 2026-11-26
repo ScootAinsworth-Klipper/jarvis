@@ -164,52 +164,45 @@ fun JarvisHudScreen(viewModel: JarvisViewModel) {
                         HudMessageCard(msg)
                     }
                 }
+            }
 
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .fillMaxWidth()
+            if (state.partialTranscript.isNotBlank()) {
+                Surface(
+                    color = HudBg.copy(alpha = 0.85f),
+                    shape = RoundedCornerShape(8.dp),
+                    border = BorderStroke(1.dp, HudCyan.copy(alpha = 0.45f)),
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
                 ) {
-                    if (state.partialTranscript.isNotBlank()) {
-                        Surface(
-                            color = HudBg.copy(alpha = 0.78f),
-                            shape = RoundedCornerShape(8.dp),
-                            border = BorderStroke(1.dp, HudCyan.copy(alpha = 0.45f)),
-                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp)
-                        ) {
-                            Text(
-                                text = "\"${state.partialTranscript}\"",
-                                color = HudCyan,
-                                fontSize = 13.sp,
-                                fontFamily = FontFamily.Monospace,
-                                textAlign = TextAlign.Center,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
-                            )
-                        }
-                    }
+                    Text(
+                        text = "\"${state.partialTranscript}\"",
+                        color = HudCyan,
+                        fontSize = 13.sp,
+                        fontFamily = FontFamily.Monospace,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                    )
+                }
+            }
 
-                    if (state.reactorMode == ReactorMode.SPEAKING) {
-                        Surface(
-                            color = HudBg.copy(alpha = 0.82f),
-                            shape = RoundedCornerShape(20.dp),
-                            border = BorderStroke(1.dp, HudCyan.copy(alpha = 0.6f)),
-                            modifier = Modifier.padding(bottom = 6.dp)
-                        ) {
-                            TextButton(
-                                onClick = viewModel::stopSpeaking,
-                                colors = ButtonDefaults.textButtonColors(contentColor = HudCyan),
-                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 2.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Stop,
-                                    contentDescription = "Stop Speaking",
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(modifier = Modifier.width(6.dp))
-                                Text("MUTE VOICE", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
-                            }
-                        }
+            if (state.reactorMode == ReactorMode.SPEAKING) {
+                Surface(
+                    color = HudBg.copy(alpha = 0.85f),
+                    shape = RoundedCornerShape(20.dp),
+                    border = BorderStroke(1.dp, HudCyan.copy(alpha = 0.6f)),
+                    modifier = Modifier.padding(vertical = 4.dp)
+                ) {
+                    TextButton(
+                        onClick = viewModel::stopSpeaking,
+                        colors = ButtonDefaults.textButtonColors(contentColor = HudCyan),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 2.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Stop,
+                            contentDescription = "Stop Speaking",
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text("MUTE VOICE", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
                     }
                 }
             }
