@@ -11,6 +11,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import java.util.UUID
 
 enum class ReactorMode {
     IDLE,
@@ -32,6 +33,10 @@ data class JarvisUiState(
     val partialTranscript: String = "",
     val voiceLabel: String = "EN-GB",
     val statusText: String = "CORE ONLINE // AWAITING COMMAND",
+    val userName: String = "Sir",
+    val showNamePrompt: Boolean = false,
+    val savedChats: List<SavedChatSession> = emptyList(),
+    val showHistoryDialog: Boolean = false,
     val apiKey: String = "",
     val githubToken: String = "",
     val useOnDeviceNano: Boolean = false,
@@ -48,20 +53,28 @@ data class JarvisUiState(
 class JarvisViewModel(application: Application) : AndroidViewModel(application) {
 
     private val prefs = application.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val historyStore = ChatHistoryStore(prefs)
     private val geminiClient = GeminiClient()
     private val nanoClient = NanoClient()
     private val appUpdater = AppUpdater(application)
     private var previousInteractionId: String? = null
+    private var currentSessionId: String = UUID.randomUUID().toString()
     private var messageCounter = 0L
 
     private val _isThinking = MutableStateFlow(false)
     private val _nanoStatus = MutableStateFlow<String?>(null)
     private val _speechError = MutableStateFlow<String?>(null)
     private val initialApiKey = loadInitialApiKey()
+    private val hasConfiguredName = prefs.contains(KEY_USER_NAME)
+    private val initialUserName = prefs.getString(KEY_USER_NAME, "Sir").orEmpty().ifBlank { "Sir" }
+
     private val _uiState = MutableStateFlow(
         JarvisUiState(
             apiKey = initialApiKey,
             githubToken = prefs.getString(KEY_GITHUB_TOKEN, "").orEmpty(),
+            userName = initialUserName,
+            showNamePrompt = !hasConfiguredName,
+            savedChats = historyStore.loadSessions(),
             useOnDeviceNano = if (prefs.contains(KEY_USE_NANO)) {
                 prefs.getBoolean(KEY_USE_NANO, false)
             } else {
@@ -71,7 +84,7 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
                 HudMessage(
                     id = ++messageCounter,
                     isUser = false,
-                    text = "Good evening, Sir. All systems are online and at your disposal."
+                    text = "Good evening, $initialUserName. All systems are online and at your disposal."
                 )
             )
         )
@@ -160,16 +173,75 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
         return saved.ifBlank { BuildConfig.GEMINI_API_KEY }
     }
 
-    fun updateCredentials(newApiKey: String, newGithubToken: String) {
+    fun saveUserName(newName: String) {
+        val clean = newName.trim().ifBlank { "Sir" }
+        prefs.edit().putString(KEY_USER_NAME, clean).apply()
+        _uiState.update { state ->
+            val updatedMessages = if (state.messages.size == 1 && !state.messages.first().isUser) {
+                listOf(
+                    HudMessage(
+                        id = state.messages.first().id,
+                        isUser = false,
+                        text = "Good evening, $clean. All systems are online and at your disposal."
+                    )
+                )
+            } else {
+                state.messages
+            }
+            state.copy(
+                userName = clean,
+                showNamePrompt = false,
+                messages = updatedMessages
+            )
+        }
+    }
+
+    fun dismissNamePrompt() {
+        if (!prefs.contains(KEY_USER_NAME)) {
+            prefs.edit().putString(KEY_USER_NAME, "Sir").apply()
+        }
+        _uiState.update { it.copy(showNamePrompt = false) }
+    }
+
+    fun updateCredentials(newUserName: String, newApiKey: String, newGithubToken: String) {
+        val cleanName = newUserName.trim().ifBlank { "Sir" }
         val trimmedKey = newApiKey.trim()
         val trimmedToken = newGithubToken.trim()
         prefs.edit()
+            .putString(KEY_USER_NAME, cleanName)
             .putString(KEY_API, trimmedKey)
             .putString(KEY_GITHUB_TOKEN, trimmedToken)
             .apply()
-        _uiState.update { it.copy(apiKey = trimmedKey, githubToken = trimmedToken) }
+        _uiState.update {
+            it.copy(
+                userName = cleanName,
+                apiKey = trimmedKey,
+                githubToken = trimmedToken
+            )
+        }
         if (trimmedToken.isNotEmpty()) {
             checkForUpdates(silent = true)
+        }
+    }
+
+    fun openHistoryDialog() {
+        _uiState.update { it.copy(showHistoryDialog = true, savedChats = historyStore.loadSessions()) }
+    }
+
+    fun dismissHistoryDialog() {
+        _uiState.update { it.copy(showHistoryDialog = false) }
+    }
+
+    fun restoreChatSession(session: SavedChatSession) {
+        voiceManager.stopSpeaking()
+        currentSessionId = session.id
+        previousInteractionId = session.interactionId
+        messageCounter = (session.messages.maxOfOrNull { it.id } ?: 0L) + 1L
+        _uiState.update {
+            it.copy(
+                messages = session.messages,
+                showHistoryDialog = false
+            )
         }
     }
 
@@ -299,15 +371,18 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun clearSession() {
+        persistCurrentChatIfNeeded()
         previousInteractionId = null
+        currentSessionId = UUID.randomUUID().toString()
         voiceManager.stopSpeaking()
+        val name = _uiState.value.userName
         _uiState.update {
             it.copy(
                 messages = listOf(
                     HudMessage(
                         id = ++messageCounter,
                         isUser = false,
-                        text = "Memory buffers cleared, Sir. How may I assist you?"
+                        text = "Memory buffers cleared, $name. How may I assist you?"
                     )
                 ),
                 statusText = "SESSION RESET // CORE ONLINE"
@@ -315,8 +390,24 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    private fun persistCurrentChatIfNeeded() {
+        val msgs = _uiState.value.messages
+        val firstUserPrompt = msgs.firstOrNull { it.isUser }?.text ?: return
+        val title = firstUserPrompt.take(42).let { if (firstUserPrompt.length > 42) "$it..." else it }
+        val session = SavedChatSession(
+            id = currentSessionId,
+            title = title,
+            updatedAtMs = System.currentTimeMillis(),
+            interactionId = previousInteractionId,
+            messages = msgs
+        )
+        val updated = historyStore.upsertSession(session)
+        _uiState.update { it.copy(savedChats = updated) }
+    }
+
     fun submitPrompt(prompt: String) {
         val clean = prompt.trim()
+        val name = _uiState.value.userName
         Log.d("JARVIS", "submitPrompt: '$clean', isThinking=${_isThinking.value}, keyLen=${_uiState.value.apiKey.length}")
         if (clean.isEmpty() || _isThinking.value) return
 
@@ -331,6 +422,7 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
                 partialTranscript = ""
             )
         }
+        persistCurrentChatIfNeeded()
 
         _isThinking.value = true
         viewModelScope.launch {
@@ -339,6 +431,7 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
                 val nanoResult = nanoClient.sendMessage(
                     userMessage = clean,
                     recentHistory = _uiState.value.messages,
+                    userName = name,
                     onStatus = { status ->
                         _nanoStatus.value = status
                     }
@@ -356,21 +449,23 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
                             )
                         )
                     }
+                    persistCurrentChatIfNeeded()
                     if (_uiState.value.autoSpeak) {
                         voiceManager.speak(replyText)
                     }
                 }.onFailure { error ->
                     Log.e("JARVIS", "Nano onFailure", error)
-                    val errorText = error.message ?: "On-device Gemini Nano failed, Sir."
+                    val errorText = error.message ?: "On-device Gemini Nano failed, $name."
                     _uiState.update {
                         it.copy(
                             messages = it.messages + HudMessage(
                                 id = ++messageCounter,
                                 isUser = false,
-                                text = "Apologies, Sir. $errorText"
+                                text = "Apologies, $name. $errorText"
                             )
                         )
                     }
+                    persistCurrentChatIfNeeded()
                 }
                 return@launch
             }
@@ -378,7 +473,8 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
             val result = geminiClient.sendMessage(
                 apiKey = _uiState.value.apiKey,
                 userMessage = clean,
-                previousInteractionId = previousInteractionId
+                previousInteractionId = previousInteractionId,
+                userName = name
             )
             _isThinking.value = false
 
@@ -396,21 +492,23 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
                         )
                     )
                 }
+                persistCurrentChatIfNeeded()
                 if (_uiState.value.autoSpeak) {
                     voiceManager.speak(reply.text)
                 }
             }.onFailure { error ->
                 Log.e("JARVIS", "Gemini onFailure", error)
-                val errorText = error.message ?: "Unable to reach Gemini core, Sir."
+                val errorText = error.message ?: "Unable to reach Gemini core, $name."
                 _uiState.update {
                     it.copy(
                         messages = it.messages + HudMessage(
                             id = ++messageCounter,
                             isUser = false,
-                            text = "Apologies, Sir. $errorText"
+                            text = "Apologies, $name. $errorText"
                         )
                     )
                 }
+                persistCurrentChatIfNeeded()
             }
         }
     }
@@ -426,5 +524,6 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
         private const val KEY_API = "gemini_api_key"
         private const val KEY_GITHUB_TOKEN = "github_token"
         private const val KEY_USE_NANO = "use_on_device_nano"
+        private const val KEY_USER_NAME = "user_name"
     }
 }

@@ -36,6 +36,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Refresh
@@ -137,6 +138,7 @@ fun JarvisHudScreen(viewModel: JarvisViewModel) {
                 hasUpdate = state.availableUpdate != null,
                 onToggleEngine = viewModel::toggleInferenceEngine,
                 onToggleAutoSpeak = viewModel::toggleAutoSpeak,
+                onOpenHistory = viewModel::openHistoryDialog,
                 onClear = viewModel::clearSession,
                 onCheckUpdates = viewModel::openUpdateDialog,
                 onOpenSettings = { showKeyDialog = true }
@@ -164,7 +166,7 @@ fun JarvisHudScreen(viewModel: JarvisViewModel) {
                     contentPadding = PaddingValues(vertical = 8.dp)
                 ) {
                     items(state.messages, key = { it.id }) { msg ->
-                        HudMessageCard(msg)
+                        HudMessageCard(msg, userName = state.userName)
                     }
                 }
             }
@@ -223,7 +225,7 @@ fun JarvisHudScreen(viewModel: JarvisViewModel) {
                     onValueChange = { typedCommand = it },
                     placeholder = {
                         Text(
-                            "Enter command, Sir...",
+                            "Enter command, ${state.userName}...",
                             color = HudCyan.copy(alpha = 0.45f),
                             fontSize = 13.sp,
                             fontFamily = FontFamily.Monospace
@@ -294,13 +296,30 @@ fun JarvisHudScreen(viewModel: JarvisViewModel) {
         }
     }
 
+    if (state.showNamePrompt) {
+        NamePromptDialog(
+            currentName = state.userName,
+            onConfirm = viewModel::saveUserName,
+            onDismiss = viewModel::dismissNamePrompt
+        )
+    }
+
+    if (state.showHistoryDialog) {
+        ChatHistoryDialog(
+            sessions = state.savedChats,
+            onSelectSession = viewModel::restoreChatSession,
+            onDismiss = viewModel::dismissHistoryDialog
+        )
+    }
+
     if (showKeyDialog) {
         ApiKeyDialog(
+            currentUserName = state.userName,
             currentKey = state.apiKey,
             currentGithubToken = state.githubToken,
             onDismiss = { showKeyDialog = false },
-            onSave = { newKey, newToken ->
-                viewModel.updateCredentials(newKey, newToken)
+            onSave = { newName, newKey, newToken ->
+                viewModel.updateCredentials(newName, newKey, newToken)
                 showKeyDialog = false
             }
         )
@@ -349,6 +368,7 @@ private fun HudHeader(
     hasUpdate: Boolean,
     onToggleEngine: () -> Unit,
     onToggleAutoSpeak: () -> Unit,
+    onOpenHistory: () -> Unit,
     onClear: () -> Unit,
     onCheckUpdates: () -> Unit,
     onOpenSettings: () -> Unit
@@ -374,39 +394,48 @@ private fun HudHeader(
                     modifier = Modifier.weight(1f)
                 )
 
-                IconButton(onClick = onToggleAutoSpeak, modifier = Modifier.size(34.dp)) {
+                IconButton(onClick = onToggleAutoSpeak, modifier = Modifier.size(32.dp)) {
                     Icon(
                         imageVector = if (autoSpeak) Icons.AutoMirrored.Filled.VolumeUp else Icons.AutoMirrored.Filled.VolumeOff,
                         contentDescription = "Toggle voice output",
                         tint = if (autoSpeak) HudCyan else Color.Gray,
-                        modifier = Modifier.size(19.dp)
+                        modifier = Modifier.size(18.dp)
                     )
                 }
 
-                IconButton(onClick = onClear, modifier = Modifier.size(34.dp)) {
+                IconButton(onClick = onOpenHistory, modifier = Modifier.size(32.dp)) {
+                    Icon(
+                        imageVector = Icons.Default.History,
+                        contentDescription = "Recent chats",
+                        tint = HudCyan,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+
+                IconButton(onClick = onClear, modifier = Modifier.size(32.dp)) {
                     Icon(
                         imageVector = Icons.Default.Refresh,
-                        contentDescription = "Reset session",
+                        contentDescription = "New chat",
                         tint = HudCyan,
-                        modifier = Modifier.size(19.dp)
+                        modifier = Modifier.size(18.dp)
                     )
                 }
 
-                IconButton(onClick = onCheckUpdates, modifier = Modifier.size(34.dp)) {
+                IconButton(onClick = onCheckUpdates, modifier = Modifier.size(32.dp)) {
                     Icon(
                         imageVector = Icons.Default.SystemUpdate,
                         contentDescription = "Check for updates",
                         tint = if (hasUpdate) Color(0xFF00FFCC) else HudCyan,
-                        modifier = Modifier.size(19.dp)
+                        modifier = Modifier.size(18.dp)
                     )
                 }
 
-                IconButton(onClick = onOpenSettings, modifier = Modifier.size(34.dp)) {
+                IconButton(onClick = onOpenSettings, modifier = Modifier.size(32.dp)) {
                     Icon(
                         imageVector = Icons.Default.Key,
-                        contentDescription = "Credentials",
-                        tint = if (hasApiKey) HudCyan else Color(0xFFFFB74D),
-                        modifier = Modifier.size(19.dp)
+                        contentDescription = "Preferences & Keys",
+                        tint = if (hasApiKey || useOnDeviceNano) HudCyan else Color(0xFFFFB74D),
+                        modifier = Modifier.size(18.dp)
                     )
                 }
             }
@@ -463,7 +492,7 @@ private fun HudHeader(
 }
 
 @Composable
-private fun HudMessageCard(message: HudMessage) {
+private fun HudMessageCard(message: HudMessage, userName: String) {
     val borderColor = if (message.isUser) {
         Color(0xFF40C4FF).copy(alpha = 0.45f)
     } else {
@@ -483,7 +512,7 @@ private fun HudMessageCard(message: HudMessage) {
     ) {
         Column(modifier = Modifier.padding(10.dp)) {
             Text(
-                text = if (message.isUser) "SIR" else "J.A.R.V.I.S.",
+                text = if (message.isUser) userName.uppercase() else "J.A.R.V.I.S.",
                 color = if (message.isUser) Color(0xFF80D8FF) else HudCyan,
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,
@@ -567,12 +596,140 @@ private fun PushToTalkButton(
 }
 
 @Composable
+private fun NamePromptDialog(
+    currentName: String,
+    onConfirm: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    var draftName by remember(currentName) {
+        mutableStateOf(if (currentName == "Sir") "" else currentName)
+    }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = HudPanel,
+        titleContentColor = HudCyan,
+        textContentColor = HudText,
+        title = {
+            Text(
+                "IDENTITY CALIBRATION",
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold,
+                fontSize = 16.sp
+            )
+        },
+        text = {
+            Column {
+                Text(
+                    "How should J.A.R.V.I.S. address you? (Leave blank for 'Sir')",
+                    fontSize = 12.sp,
+                    color = HudText.copy(alpha = 0.85f)
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+                OutlinedTextField(
+                    value = draftName,
+                    onValueChange = { draftName = it },
+                    label = { Text("Your Name", color = HudCyan) },
+                    placeholder = { Text("e.g. Alex, Tony, Sir", color = HudCyan.copy(alpha = 0.45f)) },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = HudText,
+                        unfocusedTextColor = HudText,
+                        focusedBorderColor = HudCyan,
+                        unfocusedBorderColor = HudCyanDim
+                    )
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onConfirm(draftName) },
+                colors = ButtonDefaults.buttonColors(containerColor = HudCyan, contentColor = HudBg)
+            ) {
+                Text("CONFIRM", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("USE SIR", color = HudCyan, fontFamily = FontFamily.Monospace)
+            }
+        }
+    )
+}
+
+@Composable
+private fun ChatHistoryDialog(
+    sessions: List<SavedChatSession>,
+    onSelectSession: (SavedChatSession) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = HudPanel,
+        titleContentColor = HudCyan,
+        textContentColor = HudText,
+        title = {
+            Text(
+                "RECENT CHATS (LAST 5)",
+                fontFamily = FontFamily.Monospace,
+                fontWeight = FontWeight.Bold,
+                fontSize = 15.sp
+            )
+        },
+        text = {
+            if (sessions.isEmpty()) {
+                Text(
+                    "No saved conversations yet.",
+                    fontSize = 13.sp,
+                    color = HudText.copy(alpha = 0.8f)
+                )
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    sessions.forEach { session ->
+                        Surface(
+                            onClick = { onSelectSession(session) },
+                            color = HudBg.copy(alpha = 0.7f),
+                            shape = RoundedCornerShape(8.dp),
+                            border = BorderStroke(1.dp, HudCyan.copy(alpha = 0.4f)),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(modifier = Modifier.padding(10.dp)) {
+                                Text(
+                                    text = session.title,
+                                    color = HudText,
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    maxLines = 1
+                                )
+                                Text(
+                                    text = "${session.messages.size} messages",
+                                    color = HudCyan.copy(alpha = 0.7f),
+                                    fontSize = 10.sp,
+                                    fontFamily = FontFamily.Monospace
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) {
+                Text("CLOSE", color = HudCyan, fontFamily = FontFamily.Monospace)
+            }
+        }
+    )
+}
+
+@Composable
 private fun ApiKeyDialog(
+    currentUserName: String,
     currentKey: String,
     currentGithubToken: String,
     onDismiss: () -> Unit,
-    onSave: (String, String) -> Unit
+    onSave: (String, String, String) -> Unit
 ) {
+    var draftName by remember(currentUserName) { mutableStateOf(currentUserName) }
     var draftKey by remember(currentKey) { mutableStateOf(currentKey) }
     var draftToken by remember(currentGithubToken) { mutableStateOf(currentGithubToken) }
 
@@ -583,7 +740,7 @@ private fun ApiKeyDialog(
         textContentColor = HudText,
         title = {
             Text(
-                "HUD CREDENTIALS",
+                "HUD PREFERENCES & KEYS",
                 fontFamily = FontFamily.Monospace,
                 fontWeight = FontWeight.Bold,
                 fontSize = 16.sp
@@ -591,16 +748,29 @@ private fun ApiKeyDialog(
         },
         text = {
             Column {
-                Text(
-                    "Gemini API key is required for J.A.R.V.I.S. responses. GitHub token is optional and used for in-app updates from your private repo.",
-                    fontSize = 12.sp,
-                    color = HudText.copy(alpha = 0.85f)
+                OutlinedTextField(
+                    value = draftName,
+                    onValueChange = { draftName = it },
+                    label = { Text("Address Me As", color = HudCyan) },
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedTextColor = HudText,
+                        unfocusedTextColor = HudText,
+                        focusedBorderColor = HudCyan,
+                        unfocusedBorderColor = HudCyanDim
+                    )
                 )
                 Spacer(modifier = Modifier.height(10.dp))
+                Text(
+                    "Gemini API key is optional when using on-device NANO mode.",
+                    fontSize = 11.sp,
+                    color = HudText.copy(alpha = 0.75f)
+                )
+                Spacer(modifier = Modifier.height(6.dp))
                 OutlinedTextField(
                     value = draftKey,
                     onValueChange = { draftKey = it },
-                    label = { Text("Gemini API Key", color = HudCyan) },
+                    label = { Text("Gemini API Key (Cloud)", color = HudCyan) },
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                     colors = OutlinedTextFieldDefaults.colors(
@@ -614,7 +784,7 @@ private fun ApiKeyDialog(
                 OutlinedTextField(
                     value = draftToken,
                     onValueChange = { draftToken = it },
-                    label = { Text("GitHub Token (for updates)", color = HudCyan) },
+                    label = { Text("GitHub Token (Updates)", color = HudCyan) },
                     singleLine = true,
                     visualTransformation = PasswordVisualTransformation(),
                     colors = OutlinedTextFieldDefaults.colors(
@@ -628,7 +798,7 @@ private fun ApiKeyDialog(
         },
         confirmButton = {
             Button(
-                onClick = { onSave(draftKey, draftToken) },
+                onClick = { onSave(draftName, draftKey, draftToken) },
                 colors = ButtonDefaults.buttonColors(containerColor = HudCyan, contentColor = HudBg)
             ) {
                 Text("SAVE", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)

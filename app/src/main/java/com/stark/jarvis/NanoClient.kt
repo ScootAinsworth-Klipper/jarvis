@@ -62,27 +62,29 @@ class NanoClient {
     suspend fun sendMessage(
         userMessage: String,
         recentHistory: List<HudMessage>,
+        userName: String = "Sir",
         onStatus: (String) -> Unit
     ): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
             ensureReady(onStatus).getOrThrow()
             val client = getOrCreateModel()
+            val addressee = userName.trim().ifBlank { "Sir" }
 
             val historyBlock = recentHistory
                 .takeLast(4)
                 .joinToString("\n") { msg ->
-                    val speaker = if (msg.isUser) "Sir" else "J.A.R.V.I.S."
+                    val speaker = if (msg.isUser) addressee else "J.A.R.V.I.S."
                     "$speaker: ${msg.text}"
                 }
 
             val prompt = buildString {
-                append(NANO_SYSTEM_PROMPT)
+                append(buildNanoSystemPrompt(addressee))
                 append("\n\n")
                 if (historyBlock.isNotBlank()) {
                     append(historyBlock)
                     append("\n")
                 }
-                append("Sir: ")
+                append("$addressee: ")
                 append(userMessage)
                 append("\nJ.A.R.V.I.S.:")
             }
@@ -104,8 +106,8 @@ class NanoClient {
     }
 
     companion object {
-        private const val NANO_SYSTEM_PROMPT =
+        private fun buildNanoSystemPrompt(userName: String): String =
             "You are J.A.R.V.I.S., a polite, witty, concise British AI butler. " +
-                "Always address the user as 'Sir'. Reply in 1 to 3 short spoken sentences without markdown or asterisks."
+                "Always address the user as '$userName'. Reply in 1 to 3 short spoken sentences without markdown or asterisks."
     }
 }

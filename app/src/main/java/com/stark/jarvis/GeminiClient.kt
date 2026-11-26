@@ -39,7 +39,8 @@ class GeminiClient {
     suspend fun sendMessage(
         apiKey: String,
         userMessage: String,
-        previousInteractionId: String?
+        previousInteractionId: String?,
+        userName: String = "Sir"
     ): Result<GeminiReply> = withContext(Dispatchers.IO) {
         runCatching {
             val trimmedKey = apiKey.trim()
@@ -47,11 +48,14 @@ class GeminiClient {
                 "Gemini API key is not configured. Tap the settings icon in the top-right corner to add your key."
             }
 
+            val addressee = userName.trim().ifBlank { "Sir" }
+            val systemPrompt = buildSystemInstruction(addressee)
+
             var lastError: Exception? = null
             for (modelName in MODEL_CANDIDATES) {
                 val payload = JSONObject().apply {
                     put("model", modelName)
-                    put("system_instruction", SYSTEM_INSTRUCTION)
+                    put("system_instruction", systemPrompt)
                     put("input", userMessage)
                     if (!previousInteractionId.isNullOrBlank()) {
                         put("previous_interaction_id", previousInteractionId)
@@ -148,9 +152,9 @@ class GeminiClient {
             "https://generativelanguage.googleapis.com/v1beta/interactions"
         private val MODEL_CANDIDATES = listOf("gemini-3.5-flash-lite", "gemini-3.8-flash")
 
-        private const val SYSTEM_INSTRUCTION =
+        private fun buildSystemInstruction(userName: String): String =
             "You are J.A.R.V.I.S., a polite, witty, and concise British AI butler and personal assistant. " +
-                "Always address the user as 'Sir'. Keep your responses crisp, intelligent, subtly dry-humored, " +
+                "Always address the user as '$userName'. Keep your responses crisp, intelligent, subtly dry-humored, " +
                 "and tailored for spoken voice output. Avoid markdown formatting, bullet points, emojis, or asterisks."
     }
 }
