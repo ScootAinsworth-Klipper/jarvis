@@ -421,12 +421,21 @@ private fun PushToTalkButton(
             .clip(RoundedCornerShape(29.dp))
             .background(containerColor)
             .border(1.5.dp, glowColor, RoundedCornerShape(29.dp))
-            .pointerInput(Unit) {
+            .pointerInput(isListening) {
                 detectTapGestures(
                     onPress = {
-                        onPressStart()
-                        tryAwaitRelease()
-                        onPressEnd()
+                        if (isListening) {
+                            onPressEnd()
+                            tryAwaitRelease()
+                        } else {
+                            val startMs = System.currentTimeMillis()
+                            onPressStart()
+                            tryAwaitRelease()
+                            val heldMs = System.currentTimeMillis() - startMs
+                            if (heldMs > 350L) {
+                                onPressEnd()
+                            }
+                        }
                     }
                 )
             }
@@ -450,10 +459,10 @@ private fun PushToTalkButton(
             }
             Spacer(modifier = Modifier.width(10.dp))
             Text(
-                text = if (isListening) "LISTENING... RELEASE TO SEND" else "HOLD TO SPEAK",
+                text = if (isListening) "LISTENING... TAP OR RELEASE TO SEND" else "HOLD OR TAP TO SPEAK",
                 color = glowColor,
                 fontWeight = FontWeight.Bold,
-                fontSize = 13.sp,
+                fontSize = 12.sp,
                 fontFamily = FontFamily.Monospace
             )
         }

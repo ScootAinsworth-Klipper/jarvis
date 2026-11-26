@@ -44,6 +44,7 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
     private var messageCounter = 0L
 
     private val _isThinking = MutableStateFlow(false)
+    private val _speechError = MutableStateFlow<String?>(null)
     private val _uiState = MutableStateFlow(
         JarvisUiState(
             apiKey = loadInitialApiKey(),
@@ -60,9 +61,12 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
 
     val voiceManager = JarvisVoiceManager(
         context = application,
-        onSpeechResult = { spokenText -> submitPrompt(spokenText) },
+        onSpeechResult = { spokenText ->
+            _speechError.value = null
+            submitPrompt(spokenText)
+        },
         onSpeechError = { err ->
-            _uiState.update { it.copy(statusText = err.uppercase()) }
+            _speechError.value = err.uppercase()
         }
     )
 
@@ -73,8 +77,15 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
                 _isThinking,
                 voiceManager.isSpeaking,
                 voiceManager.audioLevel,
-                voiceManager.partialTranscript
-            ) { listening, thinking, speaking, level, partial ->
+                voiceManager.partialTranscript,
+                _speechError
+            ) { values ->
+                val listening = values[0] as Boolean
+                val thinking = values[1] as Boolean
+                val speaking = values[2] as Boolean
+                val level = values[3] as Float
+                val partial = values[4] as String
+                val speechErr = values[5] as String?
                 val mode = when {
                     listening -> ReactorMode.LISTENING
                     thinking -> ReactorMode.THINKING
@@ -82,10 +93,10 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
                     else -> ReactorMode.IDLE
                 }
                 val status = when (mode) {
-                    ReactorMode.LISTENING -> "AUDIO INPUT ACTIVE // RELEASE TO TRANSMIT"
+                    ReactorMode.LISTENING -> "AUDIO INPUT ACTIVE // TAP OR RELEASE TO SEND"
                     ReactorMode.THINKING -> "PROCESSING QUERY // GEMINI CORE"
                     ReactorMode.SPEAKING -> "VOCAL SYNTHESIS // EN-GB"
-                    ReactorMode.IDLE -> "CORE ONLINE // AWAITING COMMAND"
+                    ReactorMode.IDLE -> speechErr ?: "CORE ONLINE // AWAITING COMMAND"
                 }
                 Triple(mode, level, Pair(partial, status))
             }.collect { (mode, level, textPair) ->
@@ -123,6 +134,7 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun startPushToTalk() {
+        _speechError.value = null
         voiceManager.startListening()
     }
 

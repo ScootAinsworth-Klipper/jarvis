@@ -58,7 +58,7 @@ class GeminiClient {
                     }.getOrNull()
                     throw IllegalStateException(
                         apiMsg?.takeIf { it.isNotBlank() }
-                            ?: "Gemini API error (${response.code})"
+                            ?: "Gemini API error (${response.code}): ${rawBody.take(180)}"
                     )
                 }
 

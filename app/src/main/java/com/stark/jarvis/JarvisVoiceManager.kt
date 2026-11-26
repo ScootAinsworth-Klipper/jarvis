@@ -194,13 +194,16 @@ class JarvisVoiceManager(
                 onSpeechResult(partial)
                 return
             }
-            if (error != SpeechRecognizer.ERROR_CLIENT && error != SpeechRecognizer.ERROR_NO_MATCH) {
+            if (error == SpeechRecognizer.ERROR_NO_MATCH) {
+                onSpeechError("Didn't catch that, Sir. Please speak clearly.")
+            } else if (error != SpeechRecognizer.ERROR_CLIENT) {
                 val message = when (error) {
                     SpeechRecognizer.ERROR_AUDIO -> "Audio recording error."
                     SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS -> "Microphone permission required."
                     SpeechRecognizer.ERROR_NETWORK, SpeechRecognizer.ERROR_NETWORK_TIMEOUT ->
                         "Speech network unavailable."
                     SpeechRecognizer.ERROR_SPEECH_TIMEOUT -> "No speech detected, Sir."
+                    SpeechRecognizer.ERROR_RECOGNIZER_BUSY -> "Speech recognizer busy, try again."
                     else -> "Voice recognition error ($error)."
                 }
                 onSpeechError(message)
