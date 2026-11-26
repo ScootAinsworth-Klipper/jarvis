@@ -33,6 +33,7 @@ private val CyanBright = Color(0xFF00F0FF)
 private val CyanCore = Color(0xFF80F8FF)
 private val CyanMid = Color(0xFF00B8FF)
 private val CyanDeep = Color(0xFF004E7C)
+private val StarkGold = Color(0xFFFFB300)
 
 @Composable
 fun ArcReactorView(
@@ -144,7 +145,7 @@ fun ArcReactorView(
                         center.y + (tickOuter * sin(angleRad)).toFloat()
                     )
                     drawLine(
-                        color = if (isMajor) CyanBright.copy(alpha = 0.85f) else CyanMid.copy(alpha = 0.4f),
+                        color = if (isMajor) StarkGold.copy(alpha = 0.85f) else CyanMid.copy(alpha = 0.42f),
                         start = start,
                         end = end,
                         strokeWidth = if (isMajor) 2.2.dp.toPx() else 1.dp.toPx(),
@@ -198,7 +199,7 @@ fun ArcReactorView(
             rotate(degrees = fastRotation * speedFactor * 1.4f, pivot = center) {
                 val sweep = if (mode == ReactorMode.THINKING) 140f else 65f
                 drawArc(
-                    color = CyanBright,
+                    color = if (mode == ReactorMode.SPEAKING) StarkGold else CyanBright,
                     startAngle = 0f,
                     sweepAngle = sweep,
                     useCenter = false,
@@ -207,7 +208,7 @@ fun ArcReactorView(
                     style = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round)
                 )
                 drawArc(
-                    color = CyanBright.copy(alpha = 0.6f),
+                    color = StarkGold.copy(alpha = 0.7f),
                     startAngle = 180f,
                     sweepAngle = sweep,
                     useCenter = false,

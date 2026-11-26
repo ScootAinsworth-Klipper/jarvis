@@ -79,10 +79,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
 
-private val HudBg = Color(0xFF030811)
-private val HudPanel = Color(0xFF071526)
+private val HudBg = Color(0xFF020710)
+private val HudPanel = Color(0xFF061322)
 private val HudCyan = Color(0xFF00E5FF)
 private val HudCyanDim = Color(0xFF0B4F6C)
+private val HudGold = Color(0xFFFFB300)
 private val HudText = Color(0xFFE0F7FA)
 
 @Composable
@@ -369,6 +370,24 @@ private fun HudGridBackdrop() {
             drawLine(gridColor, Offset(0f, y), Offset(size.width, y), strokeWidth = 1f)
             y += step
         }
+
+        // Stark visor corner brackets
+        val pad = 10.dp.toPx()
+        val len = 24.dp.toPx()
+        val bracketColor = HudGold.copy(alpha = 0.55f)
+        val stroke = 2.dp.toPx()
+        // Top-left
+        drawLine(bracketColor, Offset(pad, pad), Offset(pad + len, pad), strokeWidth = stroke)
+        drawLine(bracketColor, Offset(pad, pad), Offset(pad, pad + len), strokeWidth = stroke)
+        // Top-right
+        drawLine(bracketColor, Offset(size.width - pad, pad), Offset(size.width - pad - len, pad), strokeWidth = stroke)
+        drawLine(bracketColor, Offset(size.width - pad, pad), Offset(size.width - pad, pad + len), strokeWidth = stroke)
+        // Bottom-left
+        drawLine(bracketColor, Offset(pad, size.height - pad), Offset(pad + len, size.height - pad), strokeWidth = stroke)
+        drawLine(bracketColor, Offset(pad, size.height - pad), Offset(pad, size.height - pad - len), strokeWidth = stroke)
+        // Bottom-right
+        drawLine(bracketColor, Offset(size.width - pad, size.height - pad), Offset(size.width - pad - len, size.height - pad), strokeWidth = stroke)
+        drawLine(bracketColor, Offset(size.width - pad, size.height - pad), Offset(size.width - pad, size.height - pad - len), strokeWidth = stroke)
     }
 }
 
@@ -508,14 +527,14 @@ private fun HudHeader(
 @Composable
 private fun HudMessageCard(message: HudMessage, userName: String) {
     val borderColor = if (message.isUser) {
-        Color(0xFF40C4FF).copy(alpha = 0.45f)
+        HudCyan.copy(alpha = 0.45f)
     } else {
-        HudCyan.copy(alpha = 0.65f)
+        HudGold.copy(alpha = 0.65f)
     }
     val bgColor = if (message.isUser) {
-        Color(0xFF0A1E36).copy(alpha = 0.46f)
+        Color(0xFF071B2E).copy(alpha = 0.48f)
     } else {
-        HudPanel.copy(alpha = 0.54f)
+        Color(0xFF141108).copy(alpha = 0.52f)
     }
 
     Surface(
@@ -527,7 +546,7 @@ private fun HudMessageCard(message: HudMessage, userName: String) {
         Column(modifier = Modifier.padding(10.dp)) {
             Text(
                 text = if (message.isUser) userName.uppercase() else "J.A.R.V.I.S.",
-                color = if (message.isUser) Color(0xFF80D8FF) else HudCyan,
+                color = if (message.isUser) Color(0xFF80D8FF) else HudGold,
                 fontSize = 10.sp,
                 fontWeight = FontWeight.Bold,
                 fontFamily = FontFamily.Monospace
