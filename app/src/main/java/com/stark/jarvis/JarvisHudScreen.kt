@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -56,10 +57,12 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -112,6 +115,7 @@ fun JarvisHudScreen(viewModel: JarvisViewModel) {
                 )
             )
             .statusBarsPadding()
+            .navigationBarsPadding()
             .imePadding()
     ) {
         HudGridBackdrop()
@@ -180,7 +184,8 @@ fun JarvisHudScreen(viewModel: JarvisViewModel) {
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .padding(vertical = 6.dp),
+                    .clipToBounds()
+                    .padding(vertical = 4.dp),
                 verticalArrangement = Arrangement.spacedBy(8.dp),
                 contentPadding = PaddingValues(vertical = 4.dp)
             ) {
@@ -335,60 +340,67 @@ private fun HudHeader(
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "J.A.R.V.I.S. // v${BuildConfig.VERSION_NAME}",
+                    text = "J.A.R.V.I.S. v${BuildConfig.VERSION_NAME}",
                     color = HudCyan,
                     fontWeight = FontWeight.Bold,
-                    fontSize = 15.sp,
+                    fontSize = 14.sp,
+                    maxLines = 1,
                     fontFamily = FontFamily.Monospace
                 )
                 Text(
                     text = statusText,
                     color = HudText.copy(alpha = 0.78f),
                     fontSize = 10.sp,
+                    maxLines = 1,
                     fontFamily = FontFamily.Monospace
                 )
                 Text(
                     text = "TTS: $voiceLabel",
                     color = HudCyan.copy(alpha = 0.65f),
                     fontSize = 9.sp,
+                    maxLines = 1,
                     fontFamily = FontFamily.Monospace
                 )
             }
 
-            IconButton(onClick = onToggleAutoSpeak) {
+            IconButton(onClick = onToggleAutoSpeak, modifier = Modifier.size(36.dp)) {
                 Icon(
                     imageVector = if (autoSpeak) Icons.AutoMirrored.Filled.VolumeUp else Icons.AutoMirrored.Filled.VolumeOff,
                     contentDescription = "Toggle voice output",
-                    tint = if (autoSpeak) HudCyan else Color.Gray
+                    tint = if (autoSpeak) HudCyan else Color.Gray,
+                    modifier = Modifier.size(20.dp)
                 )
             }
 
-            IconButton(onClick = onClear) {
+            IconButton(onClick = onClear, modifier = Modifier.size(36.dp)) {
                 Icon(
                     imageVector = Icons.Default.Refresh,
                     contentDescription = "Reset session",
-                    tint = HudCyan
+                    tint = HudCyan,
+                    modifier = Modifier.size(20.dp)
                 )
             }
 
-            IconButton(onClick = onCheckUpdates) {
+            IconButton(onClick = onCheckUpdates, modifier = Modifier.size(36.dp)) {
                 Icon(
                     imageVector = Icons.Default.SystemUpdate,
                     contentDescription = "Check for updates",
-                    tint = if (hasUpdate) Color(0xFF00FFCC) else HudCyan
+                    tint = if (hasUpdate) Color(0xFF00FFCC) else HudCyan,
+                    modifier = Modifier.size(20.dp)
                 )
             }
 
-            IconButton(onClick = onOpenSettings) {
+            IconButton(onClick = onOpenSettings, modifier = Modifier.size(36.dp)) {
                 Icon(
                     imageVector = Icons.Default.Key,
                     contentDescription = "Credentials",
-                    tint = if (hasApiKey) HudCyan else Color(0xFFFFB74D)
+                    tint = if (hasApiKey) HudCyan else Color(0xFFFFB74D),
+                    modifier = Modifier.size(20.dp)
                 )
             }
         }
@@ -441,6 +453,7 @@ private fun PushToTalkButton(
 ) {
     val glowColor = if (isListening) Color(0xFF00FFCC) else HudCyan
     val containerColor = if (isListening) Color(0xFF004D61) else HudPanel
+    val currentListening by rememberUpdatedState(isListening)
 
     Box(
         contentAlignment = Alignment.Center,
@@ -450,10 +463,10 @@ private fun PushToTalkButton(
             .clip(RoundedCornerShape(29.dp))
             .background(containerColor)
             .border(1.5.dp, glowColor, RoundedCornerShape(29.dp))
-            .pointerInput(isListening) {
+            .pointerInput(Unit) {
                 detectTapGestures(
                     onPress = {
-                        if (isListening) {
+                        if (currentListening) {
                             onPressEnd()
                             tryAwaitRelease()
                         } else {
