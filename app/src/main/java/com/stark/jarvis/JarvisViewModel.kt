@@ -55,12 +55,18 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
     private var messageCounter = 0L
 
     private val _isThinking = MutableStateFlow(false)
+    private val _nanoStatus = MutableStateFlow<String?>(null)
     private val _speechError = MutableStateFlow<String?>(null)
+    private val initialApiKey = loadInitialApiKey()
     private val _uiState = MutableStateFlow(
         JarvisUiState(
-            apiKey = loadInitialApiKey(),
+            apiKey = initialApiKey,
             githubToken = prefs.getString(KEY_GITHUB_TOKEN, "").orEmpty(),
-            useOnDeviceNano = prefs.getBoolean(KEY_USE_NANO, false),
+            useOnDeviceNano = if (prefs.contains(KEY_USE_NANO)) {
+                prefs.getBoolean(KEY_USE_NANO, false)
+            } else {
+                initialApiKey.isBlank()
+            },
             messages = listOf(
                 HudMessage(
                     id = ++messageCounter,
@@ -91,7 +97,8 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
                 voiceManager.isSpeaking,
                 voiceManager.audioLevel,
                 voiceManager.partialTranscript,
-                _speechError
+                _speechError,
+                _nanoStatus
             ) { values ->
                 val listening = values[0] as Boolean
                 val thinking = values[1] as Boolean
@@ -99,6 +106,7 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
                 val level = values[3] as Float
                 val partial = values[4] as String
                 val speechErr = values[5] as String?
+                val nanoStat = values[6] as String?
                 val mode = when {
                     listening -> ReactorMode.LISTENING
                     thinking -> ReactorMode.THINKING
@@ -107,9 +115,9 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
                 }
                 val status = when (mode) {
                     ReactorMode.LISTENING -> "AUDIO INPUT ACTIVE // TAP OR RELEASE TO SEND"
-                    ReactorMode.THINKING -> "PROCESSING QUERY // GEMINI CORE"
+                    ReactorMode.THINKING -> nanoStat ?: "PROCESSING QUERY // GEMINI CORE"
                     ReactorMode.SPEAKING -> "VOCAL SYNTHESIS // EN-GB"
-                    ReactorMode.IDLE -> speechErr ?: "CORE ONLINE // AWAITING COMMAND"
+                    ReactorMode.IDLE -> speechErr ?: nanoStat ?: "CORE ONLINE // AWAITING COMMAND"
                 }
                 Triple(mode, level, Pair(partial, status))
             }.collect { (mode, level, textPair) ->
@@ -127,6 +135,23 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
         }
         if (_uiState.value.githubToken.isNotBlank()) {
             checkForUpdates(silent = true)
+        }
+        if (_uiState.value.useOnDeviceNano) {
+            prepareNanoOnLaunch()
+        }
+    }
+
+    private fun prepareNanoOnLaunch() {
+        viewModelScope.launch {
+            _nanoStatus.value = "CHECKING ON-DEVICE GEMINI NANO..."
+            val result = nanoClient.ensureReady { status ->
+                _nanoStatus.value = status
+            }
+            result.onSuccess {
+                _nanoStatus.value = "NANO READY // AWAITING COMMAND"
+            }.onFailure { err ->
+                _nanoStatus.value = "NANO: ${(err.message ?: "UNAVAILABLE").uppercase()}"
+            }
         }
     }
 
@@ -252,15 +277,11 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
     fun toggleInferenceEngine() {
         val next = !_uiState.value.useOnDeviceNano
         prefs.edit().putBoolean(KEY_USE_NANO, next).apply()
-        _uiState.update {
-            it.copy(
-                useOnDeviceNano = next,
-                statusText = if (next) {
-                    "ENGINE: ON-DEVICE GEMINI NANO"
-                } else {
-                    "ENGINE: CLOUD GEMINI API"
-                }
-            )
+        _uiState.update { it.copy(useOnDeviceNano = next) }
+        if (next) {
+            prepareNanoOnLaunch()
+        } else {
+            _nanoStatus.value = null
         }
     }
 
@@ -319,9 +340,10 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
                     userMessage = clean,
                     recentHistory = _uiState.value.messages,
                     onStatus = { status ->
-                        _uiState.update { it.copy(statusText = status) }
+                        _nanoStatus.value = status
                     }
                 )
+                _nanoStatus.value = "NANO READY // AWAITING COMMAND"
                 _isThinking.value = false
                 nanoResult.onSuccess { replyText ->
                     Log.d("JARVIS", "Nano onSuccess: '${replyText.take(60)}'")
