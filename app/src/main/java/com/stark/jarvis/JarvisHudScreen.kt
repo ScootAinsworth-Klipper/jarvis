@@ -189,29 +189,6 @@ fun JarvisHudScreen(viewModel: JarvisViewModel) {
                 }
             }
 
-            if (state.reactorMode == ReactorMode.SPEAKING) {
-                Surface(
-                    color = HudBg.copy(alpha = 0.85f),
-                    shape = RoundedCornerShape(20.dp),
-                    border = BorderStroke(1.dp, HudCyan.copy(alpha = 0.6f)),
-                    modifier = Modifier.padding(vertical = 4.dp)
-                ) {
-                    TextButton(
-                        onClick = viewModel::stopSpeaking,
-                        colors = ButtonDefaults.textButtonColors(contentColor = HudCyan),
-                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 2.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Stop,
-                            contentDescription = "Stop Speaking",
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text("MUTE VOICE", fontFamily = FontFamily.Monospace, fontSize = 12.sp)
-                    }
-                }
-            }
-
             Spacer(modifier = Modifier.height(6.dp))
 
             // Text command bar + Push-to-Talk button
@@ -277,22 +254,59 @@ fun JarvisHudScreen(viewModel: JarvisViewModel) {
 
             Spacer(modifier = Modifier.height(10.dp))
 
-            // Push-to-Talk Microphone Button
-            PushToTalkButton(
-                isListening = state.reactorMode == ReactorMode.LISTENING,
-                onPressStart = {
-                    val hasPermission = ContextCompat.checkSelfPermission(
-                        context,
-                        Manifest.permission.RECORD_AUDIO
-                    ) == PackageManager.PERMISSION_GRANTED
-                    if (hasPermission) {
-                        viewModel.startPushToTalk()
-                    } else {
-                        permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            // Push-to-Talk Microphone Button (+ inline Mute button when speaking so chat height never shifts)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                PushToTalkButton(
+                    isListening = state.reactorMode == ReactorMode.LISTENING,
+                    onPressStart = {
+                        val hasPermission = ContextCompat.checkSelfPermission(
+                            context,
+                            Manifest.permission.RECORD_AUDIO
+                        ) == PackageManager.PERMISSION_GRANTED
+                        if (hasPermission) {
+                            viewModel.startPushToTalk()
+                        } else {
+                            permissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+                        }
+                    },
+                    onPressEnd = viewModel::stopPushToTalk,
+                    modifier = Modifier.weight(1f)
+                )
+
+                if (state.reactorMode == ReactorMode.SPEAKING) {
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier = Modifier
+                            .height(58.dp)
+                            .clip(RoundedCornerShape(29.dp))
+                            .background(Color(0xFF3A1219))
+                            .border(1.5.dp, Color(0xFFFF6E6E), RoundedCornerShape(29.dp))
+                            .clickable(onClick = viewModel::stopSpeaking)
+                            .padding(horizontal = 16.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Stop,
+                                contentDescription = "Mute Voice",
+                                tint = Color(0xFFFF8A80),
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text(
+                                text = "MUTE",
+                                color = Color(0xFFFF8A80),
+                                fontWeight = FontWeight.Bold,
+                                fontSize = 12.sp,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
                     }
-                },
-                onPressEnd = viewModel::stopPushToTalk
-            )
+                }
+            }
         }
     }
 
@@ -533,7 +547,8 @@ private fun HudMessageCard(message: HudMessage, userName: String) {
 private fun PushToTalkButton(
     isListening: Boolean,
     onPressStart: () -> Unit,
-    onPressEnd: () -> Unit
+    onPressEnd: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val glowColor = if (isListening) Color(0xFF00FFCC) else HudCyan
     val containerColor = if (isListening) Color(0xFF004D61) else HudPanel
@@ -541,8 +556,7 @@ private fun PushToTalkButton(
 
     Box(
         contentAlignment = Alignment.Center,
-        modifier = Modifier
-            .fillMaxWidth()
+        modifier = modifier
             .height(58.dp)
             .clip(RoundedCornerShape(29.dp))
             .background(containerColor)
