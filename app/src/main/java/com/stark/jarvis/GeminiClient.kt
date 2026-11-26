@@ -106,8 +106,31 @@ class GeminiClient {
         val direct = root.optString("output_text")
         if (direct.isNotBlank()) return direct.trim()
 
-        val outputs = root.optJSONArray("outputs") ?: return ""
         val sb = StringBuilder()
+
+        // Current Interactions REST API format: steps[].content[].text where step.type == "model_output"
+        val steps = root.optJSONArray("steps")
+        if (steps != null) {
+            for (i in 0 until steps.length()) {
+                val step = steps.optJSONObject(i) ?: continue
+                if (step.optString("type") == "model_output") {
+                    val content = step.optJSONArray("content") ?: continue
+                    for (j in 0 until content.length()) {
+                        val part = content.optJSONObject(j) ?: continue
+                        val partType = part.optString("type")
+                        val text = part.optString("text")
+                        if ((partType == "text" || partType.isBlank()) && text.isNotBlank()) {
+                            if (sb.isNotEmpty()) sb.append("\n")
+                            sb.append(text.trim())
+                        }
+                    }
+                }
+            }
+            if (sb.isNotEmpty()) return sb.toString().trim()
+        }
+
+        // Legacy/alternative format: outputs[].text
+        val outputs = root.optJSONArray("outputs") ?: return ""
         for (i in 0 until outputs.length()) {
             val item = outputs.optJSONObject(i) ?: continue
             val type = item.optString("type")
