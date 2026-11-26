@@ -69,7 +69,8 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
     private val initialApiKey = loadInitialApiKey()
     private val hasConfiguredName = prefs.contains(KEY_USER_NAME)
     private val initialUserName = prefs.getString(KEY_USER_NAME, "Sir").orEmpty().ifBlank { "Sir" }
-    private val openingTemplate = GREETING_TEMPLATES.random()
+    private var openingTemplateIndex: Int = pickNextGreetingIndex()
+    private var openingTemplate: String = GREETING_TEMPLATES[openingTemplateIndex]
     private var greetingSpokenThisLaunch = false
 
     private val _uiState = MutableStateFlow(
@@ -553,6 +554,39 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
         nanoClient.close()
     }
 
+    fun refreshGreetingOnForeground() {
+        val state = _uiState.value
+        if (state.showNamePrompt) return
+        val onlyGreeting = state.messages.size == 1 && !state.messages.first().isUser
+        if (!onlyGreeting) return
+
+        openingTemplateIndex = pickNextGreetingIndex()
+        openingTemplate = GREETING_TEMPLATES[openingTemplateIndex]
+        val greeting = formatGreeting(openingTemplate, state.userName)
+        _uiState.update {
+            it.copy(
+                messages = listOf(
+                    HudMessage(
+                        id = state.messages.first().id,
+                        isUser = false,
+                        text = greeting
+                    )
+                )
+            )
+        }
+        if (state.speakGreetingOnLaunch && state.autoSpeak && greetingSpokenThisLaunch) {
+            voiceManager.speak(greeting)
+        }
+    }
+
+    private fun pickNextGreetingIndex(): Int {
+        val lastIdx = prefs.getInt(KEY_LAST_GREETING_IDX, -1)
+        val candidates = GREETING_TEMPLATES.indices.filter { it != lastIdx }
+        val chosen = candidates.random()
+        prefs.edit().putInt(KEY_LAST_GREETING_IDX, chosen).apply()
+        return chosen
+    }
+
     private fun formatGreeting(template: String, userName: String): String {
         val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
         val timeGreeting = when {
@@ -572,6 +606,7 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
         private const val KEY_USE_NANO = "use_on_device_nano"
         private const val KEY_USER_NAME = "user_name"
         private const val KEY_SPEAK_GREETING = "speak_greeting_on_launch"
+        private const val KEY_LAST_GREETING_IDX = "last_greeting_index"
 
         private val GREETING_TEMPLATES = listOf(
             "{TIME}, {NAME}. All systems are online and at your disposal.",
