@@ -179,18 +179,26 @@ fun JarvisHudScreen(viewModel: JarvisViewModel) {
             }
 
             // Holographic Conversation Log
-            LazyColumn(
-                state = listState,
+            Surface(
+                color = HudPanel.copy(alpha = 0.35f),
+                shape = RoundedCornerShape(12.dp),
+                border = BorderStroke(1.dp, HudCyan.copy(alpha = 0.28f)),
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxWidth()
-                    .clipToBounds()
-                    .padding(vertical = 4.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-                contentPadding = PaddingValues(vertical = 4.dp)
+                    .padding(vertical = 6.dp)
             ) {
-                items(state.messages, key = { it.id }) { msg ->
-                    HudMessageCard(msg)
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    contentPadding = PaddingValues(vertical = 8.dp)
+                ) {
+                    items(state.messages, key = { it.id }) { msg ->
+                        HudMessageCard(msg)
+                    }
                 }
             }
 
