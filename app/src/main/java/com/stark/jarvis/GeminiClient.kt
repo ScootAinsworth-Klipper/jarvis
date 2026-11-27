@@ -189,48 +189,99 @@ class GeminiClient {
                 }
             }
 
-            // Free fallback (works on Free Tier Gemini keys and NANO mode with no key)
-            generateWithPollinations(prompt, addressee)
+            // Free fallback 1: Pollinations (fast when available)
+            val pollinationsResult = runCatching { generateWithPollinations(prompt, addressee) }.getOrNull()
+            if (pollinationsResult != null) {
+                return@runCatching pollinationsResult
+            }
+
+            // Free fallback 2: AI Horde community GPU network (no 402 IP limit)
+            generateWithAiHorde(prompt, addressee)
         }
     }
 
     private fun generateWithPollinations(prompt: String, addressee: String): GeminiImageReply {
         val encoded = URLEncoder.encode(prompt, "UTF-8").replace("+", "%20")
         val seed = System.currentTimeMillis() % 100000
-        val urls = listOf(
-            "https://image.pollinations.ai/prompt/$encoded?model=flux&width=768&height=768&nologo=true&seed=$seed",
-            "https://image.pollinations.ai/prompt/$encoded?width=768&height=768&nologo=true&seed=${seed + 1}",
-            "https://image.pollinations.ai/prompt/$encoded?model=flux&width=768&height=768&nologo=true&seed=${seed + 2}"
-        )
+        val url = "https://image.pollinations.ai/prompt/$encoded?model=flux&width=768&height=768&nologo=true&seed=$seed"
+        Log.d("JARVIS", "Generating image via Pollinations")
+        val request = Request.Builder()
+            .url(url)
+            .addHeader("User-Agent", "JARVIS-Android")
+            .get()
+            .build()
+        httpClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw IllegalStateException("Pollinations HTTP ${response.code}")
+            }
+            val bytes = response.body?.bytes()
+            if (bytes == null || bytes.isEmpty()) {
+                throw IllegalStateException("Empty Pollinations image")
+            }
+            return GeminiImageReply(
+                caption = "Here is the generated image, $addressee.",
+                imageBytes = bytes
+            )
+        }
+    }
 
-        var lastCode = 0
-        for ((idx, url) in urls.withIndex()) {
-            Log.d("JARVIS", "Generating image via Pollinations (attempt ${idx + 1})")
-            val request = Request.Builder()
-                .url(url)
-                .addHeader("User-Agent", "JARVIS-Android")
+    private fun generateWithAiHorde(prompt: String, addressee: String): GeminiImageReply {
+        Log.d("JARVIS", "Generating image via AI Horde")
+        val submitPayload = JSONObject().apply {
+            put("prompt", prompt)
+            put("params", JSONObject().apply {
+                put("width", 512)
+                put("height", 512)
+                put("steps", 20)
+                put("n", 1)
+            })
+        }
+        val submitReq = Request.Builder()
+            .url("https://stablehorde.net/api/v2/generate/async")
+            .addHeader("apikey", "0000000000")
+            .addHeader("Content-Type", "application/json")
+            .addHeader("Client-Agent", "JARVIS:1.22:android")
+            .post(submitPayload.toString().toRequestBody(jsonMediaType))
+            .build()
+
+        val jobId = httpClient.newCall(submitReq).execute().use { response ->
+            val raw = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                throw IllegalStateException("Image service unavailable (HTTP ${response.code}).")
+            }
+            JSONObject(raw).optString("id").takeIf { it.isNotBlank() }
+                ?: throw IllegalStateException("No job ID returned from image service.")
+        }
+
+        // Poll up to 45 seconds (15 x 3s)
+        for (attempt in 0 until 15) {
+            Thread.sleep(3000L)
+            val statusReq = Request.Builder()
+                .url("https://stablehorde.net/api/v2/generate/status/$jobId")
+                .addHeader("Client-Agent", "JARVIS:1.22:android")
                 .get()
                 .build()
-            val result = runCatching {
-                httpClient.newCall(request).execute().use { response ->
-                    lastCode = response.code
-                    if (!response.isSuccessful) {
-                        return@use null
+            val imgUrl = httpClient.newCall(statusReq).execute().use { response ->
+                if (!response.isSuccessful) return@use null
+                val json = JSONObject(response.body?.string().orEmpty())
+                if (!json.optBoolean("done", false)) return@use null
+                val gens = json.optJSONArray("generations")
+                gens?.optJSONObject(0)?.optString("img")?.takeIf { it.isNotBlank() }
+            }
+            if (imgUrl != null) {
+                val dlReq = Request.Builder().url(imgUrl).get().build()
+                httpClient.newCall(dlReq).execute().use { dlResp ->
+                    val bytes = dlResp.body?.bytes()
+                    if (dlResp.isSuccessful && bytes != null && bytes.isNotEmpty()) {
+                        return GeminiImageReply(
+                            caption = "Here is the generated image, $addressee.",
+                            imageBytes = bytes
+                        )
                     }
-                    val bytes = response.body?.bytes()
-                    if (bytes == null || bytes.isEmpty()) return@use null
-                    GeminiImageReply(
-                        caption = "Here is the generated image, $addressee.",
-                        imageBytes = bytes
-                    )
                 }
-            }.getOrNull()
-            if (result != null) return result
-            if (idx < urls.lastIndex) {
-                Thread.sleep(1200L)
             }
         }
-        throw IllegalStateException("Image service temporarily unavailable (HTTP $lastCode). Please try again.")
+        throw IllegalStateException("Image generation timed out. Please try again.")
     }
 
     private fun extractImageBase64(root: JSONObject): String {
