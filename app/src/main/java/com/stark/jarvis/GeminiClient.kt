@@ -197,27 +197,40 @@ class GeminiClient {
     private fun generateWithPollinations(prompt: String, addressee: String): GeminiImageReply {
         val encoded = URLEncoder.encode(prompt, "UTF-8").replace("+", "%20")
         val seed = System.currentTimeMillis() % 100000
-        val url = "https://image.pollinations.ai/prompt/$encoded?model=flux&width=768&height=768&nologo=true&seed=$seed"
-        Log.d("JARVIS", "Generating image via free Pollinations endpoint")
-        val request = Request.Builder()
-            .url(url)
-            .addHeader("User-Agent", "JARVIS-Android")
-            .get()
-            .build()
-        httpClient.newCall(request).execute().use { response ->
-            if (!response.isSuccessful) {
-                throw IllegalStateException("Image service returned HTTP ${response.code}.")
+        val urls = listOf(
+            "https://image.pollinations.ai/prompt/$encoded?model=flux&width=768&height=768&nologo=true&seed=$seed",
+            "https://image.pollinations.ai/prompt/$encoded?width=768&height=768&nologo=true&seed=${seed + 1}",
+            "https://image.pollinations.ai/prompt/$encoded?model=flux&width=768&height=768&nologo=true&seed=${seed + 2}"
+        )
+
+        var lastCode = 0
+        for ((idx, url) in urls.withIndex()) {
+            Log.d("JARVIS", "Generating image via Pollinations (attempt ${idx + 1})")
+            val request = Request.Builder()
+                .url(url)
+                .addHeader("User-Agent", "JARVIS-Android")
+                .get()
+                .build()
+            val result = runCatching {
+                httpClient.newCall(request).execute().use { response ->
+                    lastCode = response.code
+                    if (!response.isSuccessful) {
+                        return@use null
+                    }
+                    val bytes = response.body?.bytes()
+                    if (bytes == null || bytes.isEmpty()) return@use null
+                    GeminiImageReply(
+                        caption = "Here is the generated image, $addressee.",
+                        imageBytes = bytes
+                    )
+                }
+            }.getOrNull()
+            if (result != null) return result
+            if (idx < urls.lastIndex) {
+                Thread.sleep(1200L)
             }
-            val bytes = response.body?.bytes()
-                ?: throw IllegalStateException("Empty image response.")
-            if (bytes.isEmpty()) {
-                throw IllegalStateException("Received 0 image bytes.")
-            }
-            return GeminiImageReply(
-                caption = "Here is the generated image, $addressee.",
-                imageBytes = bytes
-            )
         }
+        throw IllegalStateException("Image service temporarily unavailable (HTTP $lastCode). Please try again.")
     }
 
     private fun extractImageBase64(root: JSONObject): String {
