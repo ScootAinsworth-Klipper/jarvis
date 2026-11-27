@@ -226,13 +226,23 @@ class GeminiClient {
     }
 
     private fun generateWithAiHorde(prompt: String, addressee: String): GeminiImageReply {
-        Log.d("JARVIS", "Generating image via AI Horde")
+        Log.d("JARVIS", "Generating image via AI Horde (SDXL)")
         val submitPayload = JSONObject().apply {
-            put("prompt", prompt)
+            put("prompt", "$prompt, highly detailed, sharp focus, high quality###blurry, low quality, distorted, deformed, ugly, watermark, text")
+            put("nsfw", false)
+            put("models", JSONArray().apply {
+                put("AlbedoBase XL (SDXL)")
+                put("AlbedoBase XL 3.1")
+                put("Juggernaut XL")
+                put("SDXL 1.0")
+            })
             put("params", JSONObject().apply {
-                put("width", 512)
-                put("height", 512)
-                put("steps", 20)
+                put("width", 1024)
+                put("height", 1024)
+                put("steps", 25)
+                put("cfg_scale", 7.0)
+                put("sampler_name", "k_dpmpp_2m")
+                put("karras", true)
                 put("n", 1)
             })
         }
@@ -240,7 +250,7 @@ class GeminiClient {
             .url("https://stablehorde.net/api/v2/generate/async")
             .addHeader("apikey", "0000000000")
             .addHeader("Content-Type", "application/json")
-            .addHeader("Client-Agent", "JARVIS:1.22:android")
+            .addHeader("Client-Agent", "JARVIS:1.23:android")
             .post(submitPayload.toString().toRequestBody(jsonMediaType))
             .build()
 
@@ -253,8 +263,8 @@ class GeminiClient {
                 ?: throw IllegalStateException("No job ID returned from image service.")
         }
 
-        // Poll up to 45 seconds (15 x 3s)
-        for (attempt in 0 until 15) {
+        // Poll up to 75 seconds (25 x 3s) for SDXL workers
+        for (attempt in 0 until 25) {
             Thread.sleep(3000L)
             val statusReq = Request.Builder()
                 .url("https://stablehorde.net/api/v2/generate/status/$jobId")
