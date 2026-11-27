@@ -29,7 +29,8 @@ class ChatHistoryStore(private val prefs: SharedPreferences) {
                                 HudMessage(
                                     id = m.optLong("id", j.toLong()),
                                     isUser = m.optBoolean("isUser", false),
-                                    text = m.optString("text", "")
+                                    text = m.optString("text", ""),
+                                    imagePath = m.optString("imagePath").takeIf { it.isNotBlank() }
                                 )
                             )
                         }
@@ -65,6 +66,7 @@ class ChatHistoryStore(private val prefs: SharedPreferences) {
                         put("id", m.id)
                         put("isUser", m.isUser)
                         put("text", m.text)
+                        put("imagePath", m.imagePath.orEmpty())
                     }
                 )
             }

@@ -1,5 +1,6 @@
 package com.stark.jarvis
 
+import android.util.Base64
 import android.util.Log
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -16,6 +17,11 @@ import java.util.concurrent.TimeUnit
 data class GeminiReply(
     val text: String,
     val interactionId: String?
+)
+
+data class GeminiImageReply(
+    val caption: String,
+    val imageBytes: ByteArray
 )
 
 class GeminiClient {
@@ -106,6 +112,104 @@ class GeminiClient {
         }
     }
 
+    suspend fun generateImage(
+        apiKey: String,
+        prompt: String,
+        userName: String = "Sir"
+    ): Result<GeminiImageReply> = withContext(Dispatchers.IO) {
+        runCatching {
+            val trimmedKey = apiKey.trim()
+            require(trimmedKey.isNotEmpty()) {
+                "Gemini API key is not configured. Tap the settings icon in the top-right corner to add your key."
+            }
+            val addressee = userName.trim().ifBlank { "Sir" }
+
+            var lastError: Exception? = null
+            for (modelName in IMAGE_MODEL_CANDIDATES) {
+                val payload = JSONObject().apply {
+                    put("model", modelName)
+                    put("input", prompt)
+                }
+
+                val request = Request.Builder()
+                    .url(INTERACTIONS_ENDPOINT)
+                    .addHeader("x-goog-api-key", trimmedKey)
+                    .addHeader("Content-Type", "application/json")
+                    .post(payload.toString().toRequestBody(jsonMediaType))
+                    .build()
+
+                Log.d("JARVIS", "Generating image with $modelName")
+                httpClient.newCall(request).execute().use { response ->
+                    val rawBody = response.body?.string().orEmpty()
+                    Log.d("JARVIS", "Gemini Image HTTP ${response.code} ($modelName), bodyLen=${rawBody.length}")
+                    if (response.code == 404 || response.code == 503 || response.code == 429) {
+                        val apiMsg = runCatching {
+                            JSONObject(rawBody).optJSONObject("error")?.optString("message")
+                        }.getOrNull()
+                        lastError = IllegalStateException(
+                            apiMsg?.takeIf { it.isNotBlank() }
+                                ?: "Gemini Image error (${response.code})"
+                        )
+                        return@use
+                    }
+                    if (!response.isSuccessful) {
+                        val apiMsg = runCatching {
+                            JSONObject(rawBody).optJSONObject("error")?.optString("message")
+                        }.getOrNull()
+                        throw IllegalStateException(
+                            apiMsg?.takeIf { it.isNotBlank() }
+                                ?: "Gemini Image error (${response.code}): ${rawBody.take(180)}"
+                        )
+                    }
+
+                    val root = JSONObject(rawBody)
+                    val base64Data = extractImageBase64(root)
+                    if (base64Data.isBlank()) {
+                        throw IllegalStateException("No image data returned from Gemini.")
+                    }
+                    val bytes = Base64.decode(base64Data, Base64.DEFAULT)
+                    val caption = extractReplyText(root).ifBlank {
+                        "Here is the generated image, $addressee."
+                    }
+                    return@runCatching GeminiImageReply(caption = caption, imageBytes = bytes)
+                }
+            }
+            throw (lastError ?: IllegalStateException("Image generation models are currently unavailable."))
+        }
+    }
+
+    private fun extractImageBase64(root: JSONObject): String {
+        val outputImg = root.optJSONObject("output_image")?.optString("data").orEmpty()
+        if (outputImg.isNotBlank()) return outputImg
+
+        val steps = root.optJSONArray("steps")
+        if (steps != null) {
+            for (i in 0 until steps.length()) {
+                val step = steps.optJSONObject(i) ?: continue
+                val content = step.optJSONArray("content") ?: continue
+                for (j in 0 until content.length()) {
+                    val part = content.optJSONObject(j) ?: continue
+                    if (part.optString("type") == "image") {
+                        val data = part.optString("data")
+                        if (data.isNotBlank()) return data
+                    }
+                }
+            }
+        }
+
+        val outputs = root.optJSONArray("outputs")
+        if (outputs != null) {
+            for (i in 0 until outputs.length()) {
+                val item = outputs.optJSONObject(i) ?: continue
+                if (item.optString("type") == "image") {
+                    val data = item.optString("data")
+                    if (data.isNotBlank()) return data
+                }
+            }
+        }
+        return ""
+    }
+
     private fun extractReplyText(root: JSONObject): String {
         val direct = root.optString("output_text")
         if (direct.isNotBlank()) return direct.trim()
@@ -151,6 +255,11 @@ class GeminiClient {
         private const val INTERACTIONS_ENDPOINT =
             "https://generativelanguage.googleapis.com/v1beta/interactions"
         private val MODEL_CANDIDATES = listOf("gemini-3.5-flash-lite", "gemini-3.8-flash")
+        private val IMAGE_MODEL_CANDIDATES = listOf(
+            "gemini-nano-banana-2.1",
+            "gemini-3.1-flash-image",
+            "gemini-2.5-flash-image"
+        )
 
         private fun buildSystemInstruction(userName: String): String =
             "You are J.A.R.V.I.S., a polite, witty, and concise British AI butler and personal assistant. " +

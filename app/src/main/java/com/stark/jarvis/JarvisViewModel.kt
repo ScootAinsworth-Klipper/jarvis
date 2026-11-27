@@ -1,16 +1,23 @@
 package com.stark.jarvis
 
 import android.app.Application
+import android.content.ContentValues
 import android.content.Context
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.File
 import java.util.Calendar
 import java.util.UUID
 
@@ -24,7 +31,8 @@ enum class ReactorMode {
 data class HudMessage(
     val id: Long,
     val isUser: Boolean,
-    val text: String
+    val text: String,
+    val imagePath: String? = null
 )
 
 data class JarvisUiState(
@@ -41,6 +49,7 @@ data class JarvisUiState(
     val apiKey: String = "",
     val githubToken: String = "",
     val useOnDeviceNano: Boolean = false,
+    val imageModeEnabled: Boolean = false,
     val autoSpeak: Boolean = true,
     val speakGreetingOnLaunch: Boolean = true,
     val isThinking: Boolean = false,
@@ -381,6 +390,36 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
         _uiState.update { it.copy(autoSpeak = next) }
     }
 
+    fun toggleImageMode() {
+        _uiState.update { it.copy(imageModeEnabled = !it.imageModeEnabled) }
+    }
+
+    fun saveImageToGallery(imagePath: String) {
+        viewModelScope.launch {
+            val saved = withContext(Dispatchers.IO) {
+                runCatching {
+                    val file = File(imagePath)
+                    if (!file.exists()) return@runCatching false
+                    val resolver = getApplication<Application>().contentResolver
+                    val values = ContentValues().apply {
+                        put(MediaStore.Images.Media.DISPLAY_NAME, "JARVIS_${System.currentTimeMillis()}.png")
+                        put(MediaStore.Images.Media.MIME_TYPE, "image/png")
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                            put(MediaStore.Images.Media.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/JARVIS")
+                        }
+                    }
+                    val uri = resolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
+                        ?: return@runCatching false
+                    resolver.openOutputStream(uri)?.use { out ->
+                        file.inputStream().use { it.copyTo(out) }
+                    }
+                    true
+                }.getOrDefault(false)
+            }
+            _nanoStatus.value = if (saved) "IMAGE SAVED TO GALLERY" else "FAILED TO SAVE IMAGE"
+        }
+    }
+
     fun toggleInferenceEngine() {
         val next = !_uiState.value.useOnDeviceNano
         prefs.edit().putBoolean(KEY_USE_NANO, next).apply()
@@ -459,9 +498,79 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
         }
         persistCurrentChatIfNeeded()
 
+        val wantsImage = _uiState.value.imageModeEnabled || isImageGenerationPrompt(clean)
+        if (_uiState.value.imageModeEnabled) {
+            _uiState.update { it.copy(imageModeEnabled = false) }
+        }
+
         _isThinking.value = true
         viewModelScope.launch {
             val useNano = _uiState.value.useOnDeviceNano
+            if (wantsImage) {
+                if (useNano) {
+                    _isThinking.value = false
+                    val msg = "Apologies, $name. Image generation requires Cloud API mode. Please switch from NANO to CLOUD API in the top bar."
+                    _uiState.update {
+                        it.copy(
+                            messages = it.messages + HudMessage(
+                                id = ++messageCounter,
+                                isUser = false,
+                                text = msg
+                            )
+                        )
+                    }
+                    persistCurrentChatIfNeeded()
+                    if (_uiState.value.autoSpeak) voiceManager.speak(msg)
+                    return@launch
+                }
+
+                _nanoStatus.value = "SYNTHESIZING IMAGE // GEMINI CORE"
+                val imgResult = geminiClient.generateImage(
+                    apiKey = _uiState.value.apiKey,
+                    prompt = clean,
+                    userName = name
+                )
+                _nanoStatus.value = null
+                _isThinking.value = false
+
+                imgResult.onSuccess { imgReply ->
+                    val savedPath = withContext(Dispatchers.IO) {
+                        val dir = File(getApplication<Application>().filesDir, "generated_images").apply { mkdirs() }
+                        val outFile = File(dir, "${UUID.randomUUID()}.png")
+                        outFile.writeBytes(imgReply.imageBytes)
+                        outFile.absolutePath
+                    }
+                    _uiState.update {
+                        it.copy(
+                            messages = it.messages + HudMessage(
+                                id = ++messageCounter,
+                                isUser = false,
+                                text = imgReply.caption,
+                                imagePath = savedPath
+                            )
+                        )
+                    }
+                    persistCurrentChatIfNeeded()
+                    if (_uiState.value.autoSpeak) {
+                        voiceManager.speak(imgReply.caption)
+                    }
+                }.onFailure { error ->
+                    Log.e("JARVIS", "Gemini image onFailure", error)
+                    val errorText = error.message ?: "Image generation failed, $name."
+                    _uiState.update {
+                        it.copy(
+                            messages = it.messages + HudMessage(
+                                id = ++messageCounter,
+                                isUser = false,
+                                text = "Apologies, $name. $errorText"
+                            )
+                        )
+                    }
+                    persistCurrentChatIfNeeded()
+                }
+                return@launch
+            }
+
             if (useNano) {
                 val nanoResult = nanoClient.sendMessage(
                     userMessage = clean,
@@ -579,6 +688,14 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
         }
     }
 
+    private fun isImageGenerationPrompt(prompt: String): Boolean {
+        val lower = prompt.lowercase()
+        if (lower.startsWith("draw ") || lower.startsWith("imagine ") || lower.startsWith("generate image")) {
+            return true
+        }
+        return IMAGE_INTENT_REGEX.containsMatchIn(lower)
+    }
+
     private fun pickNextGreetingIndex(): Int {
         val lastIdx = prefs.getInt(KEY_LAST_GREETING_IDX, -1)
         val candidates = GREETING_TEMPLATES.indices.filter { it != lastIdx }
@@ -607,6 +724,10 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
         private const val KEY_USER_NAME = "user_name"
         private const val KEY_SPEAK_GREETING = "speak_greeting_on_launch"
         private const val KEY_LAST_GREETING_IDX = "last_greeting_index"
+
+        private val IMAGE_INTENT_REGEX = Regex(
+            """\b(generate|create|draw|make|paint|render|design|show me)\b.*\b(image|picture|photo|drawing|illustration|artwork|sketch|logo|wallpaper|poster)\b"""
+        )
 
         private val GREETING_TEMPLATES = listOf(
             "{TIME}, {NAME}. All systems are online and at your disposal.",

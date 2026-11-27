@@ -2,10 +2,12 @@ package com.stark.jarvis
 
 import android.Manifest
 import android.content.pm.PackageManager
+import android.graphics.BitmapFactory
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -19,6 +21,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
@@ -36,7 +39,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.automirrored.filled.VolumeOff
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
+import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.History
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Key
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.Refresh
@@ -71,7 +76,9 @@ import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -192,7 +199,11 @@ fun JarvisHudScreen(viewModel: JarvisViewModel) {
                     contentPadding = PaddingValues(vertical = 8.dp)
                 ) {
                     items(state.messages, key = { it.id }) { msg ->
-                        HudMessageCard(msg, userName = state.userName)
+                        HudMessageCard(
+                            message = msg,
+                            userName = state.userName,
+                            onSaveImage = viewModel::saveImageToGallery
+                        )
                     }
                 }
             }
@@ -228,8 +239,8 @@ fun JarvisHudScreen(viewModel: JarvisViewModel) {
                     onValueChange = { typedCommand = it },
                     placeholder = {
                         Text(
-                            "Enter command, ${state.userName}...",
-                            color = HudCyan.copy(alpha = 0.45f),
+                            if (state.imageModeEnabled) "Describe image to generate..." else "Enter command, ${state.userName}...",
+                            color = (if (state.imageModeEnabled) HudGold else HudCyan).copy(alpha = 0.55f),
                             fontSize = 13.sp,
                             fontFamily = FontFamily.Monospace
                         )
@@ -256,6 +267,25 @@ fun JarvisHudScreen(viewModel: JarvisViewModel) {
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.weight(1f)
                 )
+
+                IconButton(
+                    onClick = viewModel::toggleImageMode,
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(if (state.imageModeEnabled) Color(0xFF2B2107) else HudPanel)
+                        .border(
+                            1.dp,
+                            if (state.imageModeEnabled) HudGold else HudCyan.copy(alpha = 0.45f),
+                            RoundedCornerShape(12.dp)
+                        )
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Image,
+                        contentDescription = "Generate image mode",
+                        tint = if (state.imageModeEnabled) HudGold else HudCyan
+                    )
+                }
 
                 IconButton(
                     onClick = {
@@ -551,7 +581,11 @@ private fun HudHeader(
 }
 
 @Composable
-private fun HudMessageCard(message: HudMessage, userName: String) {
+private fun HudMessageCard(
+    message: HudMessage,
+    userName: String,
+    onSaveImage: (String) -> Unit
+) {
     val borderColor = if (message.isUser) {
         HudCyan.copy(alpha = 0.45f)
     } else {
@@ -584,6 +618,43 @@ private fun HudMessageCard(message: HudMessage, userName: String) {
                 fontSize = 13.sp,
                 lineHeight = 18.sp
             )
+            val imgPath = message.imagePath
+            if (!imgPath.isNullOrBlank()) {
+                val bitmap = remember(imgPath) {
+                    BitmapFactory.decodeFile(imgPath)?.asImageBitmap()
+                }
+                if (bitmap != null) {
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Image(
+                        bitmap = bitmap,
+                        contentDescription = "Generated image",
+                        contentScale = ContentScale.FillWidth,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 320.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .border(1.dp, HudGold.copy(alpha = 0.5f), RoundedCornerShape(8.dp))
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    TextButton(
+                        onClick = { onSaveImage(imgPath) },
+                        colors = ButtonDefaults.textButtonColors(contentColor = HudCyan),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Download,
+                            contentDescription = "Save to gallery",
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "SAVE TO GALLERY",
+                            fontSize = 11.sp,
+                            fontFamily = FontFamily.Monospace
+                        )
+                    }
+                }
+            }
         }
     }
 }
