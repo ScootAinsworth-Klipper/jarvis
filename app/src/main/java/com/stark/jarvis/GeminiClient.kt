@@ -9,6 +9,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.Inet4Address
 import java.net.InetAddress
@@ -47,69 +48,97 @@ class GeminiClient {
         apiKey: String,
         userMessage: String,
         previousInteractionId: String?,
-        userName: String = "Sir"
+        userName: String = "Sir",
+        recentHistory: List<HudMessage> = emptyList()
     ): Result<GeminiReply> = withContext(Dispatchers.IO) {
         runCatching {
             val trimmedKey = apiKey.trim()
-            require(trimmedKey.isNotEmpty()) {
-                "Gemini API key is not configured. Tap the settings icon in the top-right corner to add your key."
-            }
-
             val addressee = userName.trim().ifBlank { "Sir" }
             val systemPrompt = buildSystemInstruction(addressee)
 
-            var lastError: Exception? = null
-            for (modelName in MODEL_CANDIDATES) {
-                val payload = JSONObject().apply {
-                    put("model", modelName)
-                    put("system_instruction", systemPrompt)
-                    put("input", userMessage)
-                    if (!previousInteractionId.isNullOrBlank()) {
-                        put("previous_interaction_id", previousInteractionId)
-                    }
-                }
-
-                val request = Request.Builder()
-                    .url(INTERACTIONS_ENDPOINT)
-                    .addHeader("x-goog-api-key", trimmedKey)
-                    .addHeader("Content-Type", "application/json")
-                    .post(payload.toString().toRequestBody(jsonMediaType))
-                    .build()
-
-                Log.d("JARVIS", "Sending request to $INTERACTIONS_ENDPOINT ($modelName)")
-                httpClient.newCall(request).execute().use { response ->
-                    val rawBody = response.body?.string().orEmpty()
-                    Log.d("JARVIS", "Gemini HTTP ${response.code} ($modelName), bodyLen=${rawBody.length}")
-                    if (response.code == 503 || response.code == 429) {
-                        val apiMsg = runCatching {
-                            JSONObject(rawBody).optJSONObject("error")?.optString("message")
-                        }.getOrNull()
-                        lastError = IllegalStateException(
-                            apiMsg?.takeIf { it.isNotBlank() }
-                                ?: "Gemini API error (${response.code})"
-                        )
-                        return@use
-                    }
-                    if (!response.isSuccessful) {
-                        val apiMsg = runCatching {
-                            JSONObject(rawBody).optJSONObject("error")?.optString("message")
-                        }.getOrNull()
-                        throw IllegalStateException(
-                            apiMsg?.takeIf { it.isNotBlank() }
-                                ?: "Gemini API error (${response.code}): ${rawBody.take(180)}"
-                        )
+            if (trimmedKey.isNotEmpty()) {
+                for (modelName in MODEL_CANDIDATES) {
+                    val payload = JSONObject().apply {
+                        put("model", modelName)
+                        put("system_instruction", systemPrompt)
+                        put("input", userMessage)
+                        if (!previousInteractionId.isNullOrBlank()) {
+                            put("previous_interaction_id", previousInteractionId)
+                        }
                     }
 
-                    val root = JSONObject(rawBody)
-                    val interactionId = root.optString("id").takeIf { it.isNotBlank() }
-                    val replyText = extractReplyText(root)
-                    if (replyText.isBlank()) {
-                        throw IllegalStateException("Received an empty response from Gemini.")
+                    val request = Request.Builder()
+                        .url(INTERACTIONS_ENDPOINT)
+                        .addHeader("x-goog-api-key", trimmedKey)
+                        .addHeader("Content-Type", "application/json")
+                        .post(payload.toString().toRequestBody(jsonMediaType))
+                        .build()
+
+                    Log.d("JARVIS", "Sending request to $INTERACTIONS_ENDPOINT ($modelName)")
+                    val reply = runCatching {
+                        httpClient.newCall(request).execute().use { response ->
+                            val rawBody = response.body?.string().orEmpty()
+                            Log.d("JARVIS", "Gemini HTTP ${response.code} ($modelName), bodyLen=${rawBody.length}")
+                            if (!response.isSuccessful) {
+                                return@use null
+                            }
+                            val root = JSONObject(rawBody)
+                            val interactionId = root.optString("id").takeIf { it.isNotBlank() }
+                            val replyText = extractReplyText(root)
+                            if (replyText.isBlank()) return@use null
+                            GeminiReply(text = replyText, interactionId = interactionId)
+                        }
+                    }.getOrNull()
+                    if (reply != null) {
+                        return@runCatching reply
                     }
-                    return@runCatching GeminiReply(text = replyText, interactionId = interactionId)
                 }
             }
-            throw (lastError ?: IllegalStateException("All Gemini models are currently unavailable."))
+
+            // Automatic free fallback if Gemini returns 402/503/429 or no key is set
+            sendViaPollinations(systemPrompt, userMessage, recentHistory)
+        }
+    }
+
+    private fun sendViaPollinations(
+        systemPrompt: String,
+        userMessage: String,
+        recentHistory: List<HudMessage>
+    ): GeminiReply {
+        val messages = JSONArray().apply {
+            put(JSONObject().apply {
+                put("role", "system")
+                put("content", systemPrompt)
+            })
+            recentHistory.takeLast(6).forEach { msg ->
+                put(JSONObject().apply {
+                    put("role", if (msg.isUser) "user" else "assistant")
+                    put("content", msg.text)
+                })
+            }
+            put(JSONObject().apply {
+                put("role", "user")
+                put("content", userMessage)
+            })
+        }
+        val payload = JSONObject().apply {
+            put("messages", messages)
+            put("model", "openai")
+        }
+        val request = Request.Builder()
+            .url("https://text.pollinations.ai/")
+            .addHeader("Content-Type", "application/json")
+            .addHeader("User-Agent", "JARVIS-Android")
+            .post(payload.toString().toRequestBody(jsonMediaType))
+            .build()
+
+        Log.d("JARVIS", "Sending request via free text fallback")
+        httpClient.newCall(request).execute().use { response ->
+            val body = response.body?.string().orEmpty().trim()
+            if (!response.isSuccessful || body.isBlank()) {
+                throw IllegalStateException("AI service unavailable (${response.code}).")
+            }
+            return GeminiReply(text = body, interactionId = null)
         }
     }
 
@@ -167,7 +196,8 @@ class GeminiClient {
 
     private fun generateWithPollinations(prompt: String, addressee: String): GeminiImageReply {
         val encoded = URLEncoder.encode(prompt, "UTF-8").replace("+", "%20")
-        val url = "https://image.pollinations.ai/prompt/$encoded?width=768&height=768&nologo=true"
+        val seed = System.currentTimeMillis() % 100000
+        val url = "https://image.pollinations.ai/prompt/$encoded?model=flux&width=768&height=768&nologo=true&seed=$seed"
         Log.d("JARVIS", "Generating image via free Pollinations endpoint")
         val request = Request.Builder()
             .url(url)

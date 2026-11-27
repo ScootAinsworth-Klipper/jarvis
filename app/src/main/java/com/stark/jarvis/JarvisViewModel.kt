@@ -191,7 +191,10 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
             result.onSuccess {
                 _nanoStatus.value = "NANO READY // AWAITING COMMAND"
             }.onFailure { err ->
-                _nanoStatus.value = "NANO: ${(err.message ?: "UNAVAILABLE").uppercase()}"
+                Log.w("JARVIS", "Nano unavailable, switching to Cloud/Fallback: ${err.message}")
+                prefs.edit().putBoolean(KEY_USE_NANO, false).apply()
+                _nanoStatus.value = null
+                _uiState.update { it.copy(useOnDeviceNano = false) }
             }
         }
     }
@@ -601,7 +604,8 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
                 apiKey = _uiState.value.apiKey,
                 userMessage = clean,
                 previousInteractionId = previousInteractionId,
-                userName = name
+                userName = name,
+                recentHistory = _uiState.value.messages
             )
             _isThinking.value = false
 
