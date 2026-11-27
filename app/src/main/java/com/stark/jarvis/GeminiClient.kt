@@ -144,17 +144,31 @@ class GeminiClient {
 
     suspend fun generateImage(
         apiKey: String,
+        cfAccountId: String,
+        cfApiToken: String,
         prompt: String,
         userName: String = "Sir",
         onStatus: (String) -> Unit = {}
     ): Result<GeminiImageReply> = withContext(Dispatchers.IO) {
         runCatching {
             val trimmedKey = apiKey.trim()
+            val trimmedCfAccount = cfAccountId.trim()
+            val trimmedCfToken = cfApiToken.trim()
             val addressee = userName.trim().ifBlank { "Sir" }
 
             onStatus("REFINING IMAGE PROMPT...")
             val visualPrompt = refineImagePrompt(trimmedKey, prompt)
             Log.d("JARVIS", "Refined image prompt: '$visualPrompt'")
+
+            if (trimmedCfAccount.isNotEmpty() && trimmedCfToken.isNotEmpty()) {
+                onStatus("GENERATING FLUX IMAGE (CLOUDFLARE)...")
+                return@runCatching generateWithCloudflare(
+                    accountId = trimmedCfAccount,
+                    apiToken = trimmedCfToken,
+                    prompt = visualPrompt,
+                    addressee = addressee
+                )
+            }
 
             onStatus("GENERATING FLUX IMAGE...")
             val fluxResult = runCatching { generateWithGradioFlux(visualPrompt, addressee) }.getOrNull()
@@ -166,6 +180,48 @@ class GeminiClient {
 
             onStatus("GENERATING SDXL IMAGE...")
             generateWithGradioSdxlLightning(visualPrompt, addressee)
+        }
+    }
+
+    private fun generateWithCloudflare(
+        accountId: String,
+        apiToken: String,
+        prompt: String,
+        addressee: String
+    ): GeminiImageReply {
+        val url = "https://api.cloudflare.com/client/v4/accounts/$accountId/ai/run/@cf/black-forest-labs/flux-1-schnell"
+        val payload = JSONObject().apply {
+            put("prompt", prompt)
+            put("steps", 4)
+        }
+        val request = Request.Builder()
+            .url(url)
+            .addHeader("Authorization", "Bearer $apiToken")
+            .addHeader("Content-Type", "application/json")
+            .post(payload.toString().toRequestBody(jsonMediaType))
+            .build()
+
+        Log.d("JARVIS", "Generating image via Cloudflare Workers AI FLUX.1-schnell")
+        httpClient.newCall(request).execute().use { response ->
+            val rawBody = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                val errMsg = runCatching {
+                    JSONObject(rawBody).optJSONArray("errors")?.optJSONObject(0)?.optString("message")
+                }.getOrNull()?.takeIf { it.isNotBlank() }
+                throw IllegalStateException(
+                    errMsg ?: "Cloudflare AI error (${response.code}). Check Account ID and API Token."
+                )
+            }
+            val root = JSONObject(rawBody)
+            val b64 = root.optJSONObject("result")?.optString("image").orEmpty()
+            if (b64.isBlank()) {
+                throw IllegalStateException("Cloudflare returned an empty image.")
+            }
+            val bytes = Base64.decode(b64, Base64.DEFAULT)
+            return GeminiImageReply(
+                caption = "Here is the generated image, $addressee.",
+                imageBytes = bytes
+            )
         }
     }
 

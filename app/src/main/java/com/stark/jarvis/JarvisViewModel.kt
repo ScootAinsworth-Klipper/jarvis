@@ -47,6 +47,8 @@ data class JarvisUiState(
     val savedChats: List<SavedChatSession> = emptyList(),
     val showHistoryDialog: Boolean = false,
     val apiKey: String = "",
+    val cfAccountId: String = "",
+    val cfApiToken: String = "",
     val githubToken: String = "",
     val useOnDeviceNano: Boolean = false,
     val imageModeEnabled: Boolean = false,
@@ -85,6 +87,8 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
     private val _uiState = MutableStateFlow(
         JarvisUiState(
             apiKey = initialApiKey,
+            cfAccountId = prefs.getString(KEY_CF_ACCOUNT_ID, "").orEmpty(),
+            cfApiToken = prefs.getString(KEY_CF_API_TOKEN, "").orEmpty(),
             githubToken = prefs.getString(KEY_GITHUB_TOKEN, "").orEmpty(),
             userName = initialUserName,
             showNamePrompt = !hasConfiguredName,
@@ -246,15 +250,21 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
     fun updateCredentials(
         newUserName: String,
         newApiKey: String,
+        newCfAccountId: String,
+        newCfApiToken: String,
         newGithubToken: String,
         newSpeakGreeting: Boolean
     ) {
         val cleanName = newUserName.trim().ifBlank { "Sir" }
         val trimmedKey = newApiKey.trim()
+        val trimmedCfAccount = newCfAccountId.trim()
+        val trimmedCfToken = newCfApiToken.trim()
         val trimmedToken = newGithubToken.trim()
         prefs.edit()
             .putString(KEY_USER_NAME, cleanName)
             .putString(KEY_API, trimmedKey)
+            .putString(KEY_CF_ACCOUNT_ID, trimmedCfAccount)
+            .putString(KEY_CF_API_TOKEN, trimmedCfToken)
             .putString(KEY_GITHUB_TOKEN, trimmedToken)
             .putBoolean(KEY_SPEAK_GREETING, newSpeakGreeting)
             .apply()
@@ -262,6 +272,8 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
             it.copy(
                 userName = cleanName,
                 apiKey = trimmedKey,
+                cfAccountId = trimmedCfAccount,
+                cfApiToken = trimmedCfToken,
                 githubToken = trimmedToken,
                 speakGreetingOnLaunch = newSpeakGreeting
             )
@@ -513,6 +525,8 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
                 _nanoStatus.value = "SYNTHESIZING IMAGE..."
                 val imgResult = geminiClient.generateImage(
                     apiKey = if (useNano) "" else _uiState.value.apiKey,
+                    cfAccountId = _uiState.value.cfAccountId,
+                    cfApiToken = _uiState.value.cfApiToken,
                     prompt = clean,
                     userName = name,
                     onStatus = { status -> _nanoStatus.value = status }
@@ -707,6 +721,8 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
     companion object {
         private const val PREFS_NAME = "jarvis_hud_prefs"
         private const val KEY_API = "gemini_api_key"
+        private const val KEY_CF_ACCOUNT_ID = "cf_account_id"
+        private const val KEY_CF_API_TOKEN = "cf_api_token"
         private const val KEY_GITHUB_TOKEN = "github_token"
         private const val KEY_USE_NANO = "use_on_device_nano"
         private const val KEY_USER_NAME = "user_name"
