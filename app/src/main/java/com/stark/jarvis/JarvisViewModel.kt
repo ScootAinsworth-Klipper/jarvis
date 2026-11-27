@@ -514,7 +514,8 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
                 val imgResult = geminiClient.generateImage(
                     apiKey = if (useNano) "" else _uiState.value.apiKey,
                     prompt = clean,
-                    userName = name
+                    userName = name,
+                    onStatus = { status -> _nanoStatus.value = status }
                 )
                 _nanoStatus.value = if (useNano) "NANO READY // AWAITING COMMAND" else null
                 _isThinking.value = false

@@ -145,15 +145,17 @@ class GeminiClient {
     suspend fun generateImage(
         apiKey: String,
         prompt: String,
-        userName: String = "Sir"
+        userName: String = "Sir",
+        onStatus: (String) -> Unit = {}
     ): Result<GeminiImageReply> = withContext(Dispatchers.IO) {
         runCatching {
             val trimmedKey = apiKey.trim()
             val addressee = userName.trim().ifBlank { "Sir" }
+            onStatus("REFINING IMAGE PROMPT...")
             val visualPrompt = refineImagePrompt(trimmedKey, prompt)
             Log.d("JARVIS", "Refined image prompt: '$visualPrompt'")
 
-            if (trimmedKey.isNotEmpty()) {
+            if (trimmedKey.isNotEmpty() && !geminiImageFreeTierBlocked) {
                 for (modelName in IMAGE_MODEL_CANDIDATES) {
                     val payload = JSONObject().apply {
                         put("model", modelName)
@@ -172,6 +174,10 @@ class GeminiClient {
                         httpClient.newCall(request).execute().use { response ->
                             val rawBody = response.body?.string().orEmpty()
                             Log.d("JARVIS", "Gemini Image HTTP ${response.code} ($modelName), bodyLen=${rawBody.length}")
+                            if (response.code == 429 && rawBody.contains("Free Tier", ignoreCase = true)) {
+                                geminiImageFreeTierBlocked = true
+                                return@use null
+                            }
                             if (!response.isSuccessful) {
                                 return@use null
                             }
@@ -188,17 +194,19 @@ class GeminiClient {
                     if (geminiResult != null) {
                         return@runCatching geminiResult
                     }
+                    if (geminiImageFreeTierBlocked) break
                 }
             }
 
             // Free fallback 1: Pollinations (fast when available)
+            onStatus("RENDERING IMAGE...")
             val pollinationsResult = runCatching { generateWithPollinations(visualPrompt, addressee) }.getOrNull()
             if (pollinationsResult != null) {
                 return@runCatching pollinationsResult
             }
 
-            // Free fallback 2: AI Horde community GPU network (no 402 IP limit)
-            generateWithAiHorde(visualPrompt, addressee)
+            // Free fallback 2: AI Horde community GPU network
+            generateWithAiHorde(visualPrompt, addressee, onStatus)
         }
     }
 
@@ -256,21 +264,27 @@ class GeminiClient {
         }
     }
 
-    private fun generateWithAiHorde(prompt: String, addressee: String): GeminiImageReply {
-        Log.d("JARVIS", "Generating image via AI Horde (SDXL)")
+    private fun generateWithAiHorde(
+        prompt: String,
+        addressee: String,
+        onStatus: (String) -> Unit
+    ): GeminiImageReply {
+        Log.d("JARVIS", "Generating image via AI Horde")
         val submitPayload = JSONObject().apply {
-            put("prompt", "$prompt, highly detailed, sharp focus, high quality###blurry, low quality, distorted, deformed, ugly, watermark, text")
+            put("prompt", "$prompt, highly detailed, sharp focus, realistic###blurry, low quality, distorted, deformed, ugly, watermark, text")
             put("nsfw", false)
             put("models", JSONArray().apply {
                 put("AlbedoBase XL (SDXL)")
-                put("AlbedoBase XL 3.1")
                 put("Juggernaut XL")
+                put("Midjourney PaintArt")
+                put("NeverEnding Dream")
+                put("Liberty")
                 put("SDXL 1.0")
             })
             put("params", JSONObject().apply {
-                put("width", 768)
-                put("height", 768)
-                put("steps", 25)
+                put("width", 640)
+                put("height", 640)
+                put("steps", 22)
                 put("cfg_scale", 7.0)
                 put("sampler_name", "k_dpmpp_2m")
                 put("karras", true)
@@ -281,7 +295,7 @@ class GeminiClient {
             .url("https://stablehorde.net/api/v2/generate/async")
             .addHeader("apikey", "0000000000")
             .addHeader("Content-Type", "application/json")
-            .addHeader("Client-Agent", "JARVIS:1.23:android")
+            .addHeader("Client-Agent", "JARVIS:1.25:android")
             .post(submitPayload.toString().toRequestBody(jsonMediaType))
             .build()
 
@@ -294,18 +308,22 @@ class GeminiClient {
                 ?: throw IllegalStateException("No job ID returned from image service.")
         }
 
-        // Poll up to 75 seconds (25 x 3s) for SDXL workers
+        // Poll up to 75 seconds (25 x 3s) with live ETA in header
         for (attempt in 0 until 25) {
             Thread.sleep(3000L)
             val statusReq = Request.Builder()
                 .url("https://stablehorde.net/api/v2/generate/status/$jobId")
-                .addHeader("Client-Agent", "JARVIS:1.22:android")
+                .addHeader("Client-Agent", "JARVIS:1.25:android")
                 .get()
                 .build()
             val imgUrl = httpClient.newCall(statusReq).execute().use { response ->
                 if (!response.isSuccessful) return@use null
                 val json = JSONObject(response.body?.string().orEmpty())
-                if (!json.optBoolean("done", false)) return@use null
+                val eta = json.optInt("wait_time", 0)
+                if (!json.optBoolean("done", false)) {
+                    onStatus(if (eta > 0) "RENDERING IMAGE (ETA ~${eta}s)..." else "RENDERING IMAGE...")
+                    return@use null
+                }
                 val gens = json.optJSONArray("generations")
                 gens?.optJSONObject(0)?.optString("img")?.takeIf { it.isNotBlank() }
             }
@@ -397,6 +415,9 @@ class GeminiClient {
         }
         return sb.toString().trim()
     }
+
+    @Volatile
+    private var geminiImageFreeTierBlocked = false
 
     companion object {
         private const val INTERACTIONS_ENDPOINT =
