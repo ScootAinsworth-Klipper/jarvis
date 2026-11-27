@@ -144,70 +144,116 @@ class GeminiClient {
 
     suspend fun generateImage(
         apiKey: String,
+        hfToken: String,
         prompt: String,
         userName: String = "Sir",
         onStatus: (String) -> Unit = {}
     ): Result<GeminiImageReply> = withContext(Dispatchers.IO) {
         runCatching {
             val trimmedKey = apiKey.trim()
+            val trimmedHf = hfToken.trim()
             val addressee = userName.trim().ifBlank { "Sir" }
+
+            require(trimmedHf.isNotEmpty() || (trimmedKey.isNotEmpty() && !geminiImageFreeTierBlocked)) {
+                "Add a free Hugging Face token in the top-right Key menu to generate images."
+            }
+
             onStatus("REFINING IMAGE PROMPT...")
             val visualPrompt = refineImagePrompt(trimmedKey, prompt)
             Log.d("JARVIS", "Refined image prompt: '$visualPrompt'")
 
-            if (trimmedKey.isNotEmpty() && !geminiImageFreeTierBlocked) {
-                for (modelName in IMAGE_MODEL_CANDIDATES) {
-                    val payload = JSONObject().apply {
-                        put("model", modelName)
-                        put("input", visualPrompt)
-                    }
+            if (trimmedHf.isNotEmpty()) {
+                onStatus("GENERATING FLUX IMAGE...")
+                return@runCatching generateWithHuggingFace(trimmedHf, visualPrompt, addressee)
+            }
 
-                    val request = Request.Builder()
-                        .url(INTERACTIONS_ENDPOINT)
-                        .addHeader("x-goog-api-key", trimmedKey)
-                        .addHeader("Content-Type", "application/json")
-                        .post(payload.toString().toRequestBody(jsonMediaType))
-                        .build()
-
-                    Log.d("JARVIS", "Generating image with $modelName")
-                    val geminiResult = runCatching {
-                        httpClient.newCall(request).execute().use { response ->
-                            val rawBody = response.body?.string().orEmpty()
-                            Log.d("JARVIS", "Gemini Image HTTP ${response.code} ($modelName), bodyLen=${rawBody.length}")
-                            if (response.code == 429 && rawBody.contains("Free Tier", ignoreCase = true)) {
-                                geminiImageFreeTierBlocked = true
-                                return@use null
-                            }
-                            if (!response.isSuccessful) {
-                                return@use null
-                            }
-                            val root = JSONObject(rawBody)
-                            val base64Data = extractImageBase64(root)
-                            if (base64Data.isBlank()) return@use null
-                            val bytes = Base64.decode(base64Data, Base64.DEFAULT)
-                            val caption = extractReplyText(root).ifBlank {
-                                "Here is the generated image, $addressee."
-                            }
-                            GeminiImageReply(caption = caption, imageBytes = bytes)
-                        }
-                    }.getOrNull()
-                    if (geminiResult != null) {
-                        return@runCatching geminiResult
-                    }
-                    if (geminiImageFreeTierBlocked) break
+            for (modelName in IMAGE_MODEL_CANDIDATES) {
+                val payload = JSONObject().apply {
+                    put("model", modelName)
+                    put("input", visualPrompt)
                 }
-            }
 
-            // Free fallback 1: Pollinations (fast when available)
-            onStatus("RENDERING IMAGE...")
-            val pollinationsResult = runCatching { generateWithPollinations(visualPrompt, addressee) }.getOrNull()
-            if (pollinationsResult != null) {
-                return@runCatching pollinationsResult
-            }
+                val request = Request.Builder()
+                    .url(INTERACTIONS_ENDPOINT)
+                    .addHeader("x-goog-api-key", trimmedKey)
+                    .addHeader("Content-Type", "application/json")
+                    .post(payload.toString().toRequestBody(jsonMediaType))
+                    .build()
 
-            // Free fallback 2: AI Horde community GPU network
-            generateWithAiHorde(visualPrompt, addressee, onStatus)
+                Log.d("JARVIS", "Generating image with $modelName")
+                val geminiResult = runCatching {
+                    httpClient.newCall(request).execute().use { response ->
+                        val rawBody = response.body?.string().orEmpty()
+                        Log.d("JARVIS", "Gemini Image HTTP ${response.code} ($modelName), bodyLen=${rawBody.length}")
+                        if (response.code == 429 && rawBody.contains("Free Tier", ignoreCase = true)) {
+                            geminiImageFreeTierBlocked = true
+                            return@use null
+                        }
+                        if (!response.isSuccessful) {
+                            return@use null
+                        }
+                        val root = JSONObject(rawBody)
+                        val base64Data = extractImageBase64(root)
+                        if (base64Data.isBlank()) return@use null
+                        val bytes = Base64.decode(base64Data, Base64.DEFAULT)
+                        val caption = extractReplyText(root).ifBlank {
+                            "Here is the generated image, $addressee."
+                        }
+                        GeminiImageReply(caption = caption, imageBytes = bytes)
+                    }
+                }.getOrNull()
+                if (geminiResult != null) {
+                    return@runCatching geminiResult
+                }
+                if (geminiImageFreeTierBlocked) break
+            }
+            throw IllegalStateException("Add a free Hugging Face token in the top-right Key menu to generate images.")
         }
+    }
+
+    private fun generateWithHuggingFace(
+        hfToken: String,
+        prompt: String,
+        addressee: String
+    ): GeminiImageReply {
+        val payload = JSONObject().apply {
+            put("inputs", prompt)
+        }
+        val request = Request.Builder()
+            .url(HF_FLUX_ENDPOINT)
+            .addHeader("Authorization", "Bearer $hfToken")
+            .addHeader("Content-Type", "application/json")
+            .post(payload.toString().toRequestBody(jsonMediaType))
+            .build()
+
+        for (attempt in 0 until 2) {
+            Log.d("JARVIS", "Generating image via Hugging Face FLUX.1-schnell (attempt ${attempt + 1})")
+            httpClient.newCall(request).execute().use { response ->
+                if (response.code == 503 && attempt == 0) {
+                    // Model cold-starting on HF; wait briefly and retry once
+                    Thread.sleep(5000L)
+                    return@use
+                }
+                if (!response.isSuccessful) {
+                    val errBody = response.body?.string().orEmpty()
+                    val errMsg = runCatching {
+                        JSONObject(errBody).optString("error")
+                    }.getOrNull()?.takeIf { it.isNotBlank() }
+                    throw IllegalStateException(
+                        errMsg ?: "Hugging Face error (${response.code}). Check your token or accept FLUX.1-schnell terms."
+                    )
+                }
+                val bytes = response.body?.bytes()
+                if (bytes == null || bytes.isEmpty()) {
+                    throw IllegalStateException("Received an empty image from Hugging Face.")
+                }
+                return GeminiImageReply(
+                    caption = "Here is the generated image, $addressee.",
+                    imageBytes = bytes
+                )
+            }
+        }
+        throw IllegalStateException("Hugging Face image model is warming up. Please try again.")
     }
 
     private suspend fun refineImagePrompt(apiKey: String, rawPrompt: String): String {
@@ -420,6 +466,8 @@ class GeminiClient {
     companion object {
         private const val INTERACTIONS_ENDPOINT =
             "https://generativelanguage.googleapis.com/v1beta/interactions"
+        private const val HF_FLUX_ENDPOINT =
+            "https://router.huggingface.co/hf-inference/models/black-forest-labs/FLUX.1-schnell"
         private val MODEL_CANDIDATES = listOf("gemini-3.5-flash-lite", "gemini-3.8-flash")
         private val IMAGE_MODEL_CANDIDATES = listOf(
             "gemini-nano-banana-2.1",
