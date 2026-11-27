@@ -47,7 +47,6 @@ data class JarvisUiState(
     val savedChats: List<SavedChatSession> = emptyList(),
     val showHistoryDialog: Boolean = false,
     val apiKey: String = "",
-    val hfToken: String = "",
     val githubToken: String = "",
     val useOnDeviceNano: Boolean = false,
     val imageModeEnabled: Boolean = false,
@@ -86,7 +85,6 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
     private val _uiState = MutableStateFlow(
         JarvisUiState(
             apiKey = initialApiKey,
-            hfToken = prefs.getString(KEY_HF_TOKEN, "").orEmpty(),
             githubToken = prefs.getString(KEY_GITHUB_TOKEN, "").orEmpty(),
             userName = initialUserName,
             showNamePrompt = !hasConfiguredName,
@@ -248,18 +246,15 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
     fun updateCredentials(
         newUserName: String,
         newApiKey: String,
-        newHfToken: String,
         newGithubToken: String,
         newSpeakGreeting: Boolean
     ) {
         val cleanName = newUserName.trim().ifBlank { "Sir" }
         val trimmedKey = newApiKey.trim()
-        val trimmedHf = newHfToken.trim()
         val trimmedToken = newGithubToken.trim()
         prefs.edit()
             .putString(KEY_USER_NAME, cleanName)
             .putString(KEY_API, trimmedKey)
-            .putString(KEY_HF_TOKEN, trimmedHf)
             .putString(KEY_GITHUB_TOKEN, trimmedToken)
             .putBoolean(KEY_SPEAK_GREETING, newSpeakGreeting)
             .apply()
@@ -267,7 +262,6 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
             it.copy(
                 userName = cleanName,
                 apiKey = trimmedKey,
-                hfToken = trimmedHf,
                 githubToken = trimmedToken,
                 speakGreetingOnLaunch = newSpeakGreeting
             )
@@ -519,7 +513,6 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
                 _nanoStatus.value = "SYNTHESIZING IMAGE..."
                 val imgResult = geminiClient.generateImage(
                     apiKey = if (useNano) "" else _uiState.value.apiKey,
-                    hfToken = _uiState.value.hfToken,
                     prompt = clean,
                     userName = name,
                     onStatus = { status -> _nanoStatus.value = status }
@@ -714,7 +707,6 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
     companion object {
         private const val PREFS_NAME = "jarvis_hud_prefs"
         private const val KEY_API = "gemini_api_key"
-        private const val KEY_HF_TOKEN = "hf_token"
         private const val KEY_GITHUB_TOKEN = "github_token"
         private const val KEY_USE_NANO = "use_on_device_nano"
         private const val KEY_USER_NAME = "user_name"

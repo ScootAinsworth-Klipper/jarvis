@@ -144,120 +144,169 @@ class GeminiClient {
 
     suspend fun generateImage(
         apiKey: String,
-        hfToken: String,
         prompt: String,
         userName: String = "Sir",
         onStatus: (String) -> Unit = {}
     ): Result<GeminiImageReply> = withContext(Dispatchers.IO) {
         runCatching {
             val trimmedKey = apiKey.trim()
-            val trimmedHf = hfToken.trim()
             val addressee = userName.trim().ifBlank { "Sir" }
-
-            require(trimmedHf.isNotEmpty() || (trimmedKey.isNotEmpty() && !geminiImageFreeTierBlocked)) {
-                "Add a free Hugging Face token in the top-right Key menu to generate images."
-            }
 
             onStatus("REFINING IMAGE PROMPT...")
             val visualPrompt = refineImagePrompt(trimmedKey, prompt)
             Log.d("JARVIS", "Refined image prompt: '$visualPrompt'")
 
-            if (trimmedHf.isNotEmpty()) {
-                onStatus("GENERATING FLUX IMAGE...")
-                return@runCatching generateWithHuggingFace(trimmedHf, visualPrompt, addressee)
-            }
+            onStatus("GENERATING FLUX IMAGE...")
+            val fluxResult = runCatching { generateWithGradioFlux(visualPrompt, addressee) }.getOrNull()
+            if (fluxResult != null) return@runCatching fluxResult
 
-            for (modelName in IMAGE_MODEL_CANDIDATES) {
-                val payload = JSONObject().apply {
-                    put("model", modelName)
-                    put("input", visualPrompt)
-                }
+            onStatus("GENERATING SD 3.5 IMAGE...")
+            val sd35Result = runCatching { generateWithGradioSd35(visualPrompt, addressee) }.getOrNull()
+            if (sd35Result != null) return@runCatching sd35Result
 
-                val request = Request.Builder()
-                    .url(INTERACTIONS_ENDPOINT)
-                    .addHeader("x-goog-api-key", trimmedKey)
-                    .addHeader("Content-Type", "application/json")
-                    .post(payload.toString().toRequestBody(jsonMediaType))
-                    .build()
-
-                Log.d("JARVIS", "Generating image with $modelName")
-                val geminiResult = runCatching {
-                    httpClient.newCall(request).execute().use { response ->
-                        val rawBody = response.body?.string().orEmpty()
-                        Log.d("JARVIS", "Gemini Image HTTP ${response.code} ($modelName), bodyLen=${rawBody.length}")
-                        if (response.code == 429 && rawBody.contains("Free Tier", ignoreCase = true)) {
-                            geminiImageFreeTierBlocked = true
-                            return@use null
-                        }
-                        if (!response.isSuccessful) {
-                            return@use null
-                        }
-                        val root = JSONObject(rawBody)
-                        val base64Data = extractImageBase64(root)
-                        if (base64Data.isBlank()) return@use null
-                        val bytes = Base64.decode(base64Data, Base64.DEFAULT)
-                        val caption = extractReplyText(root).ifBlank {
-                            "Here is the generated image, $addressee."
-                        }
-                        GeminiImageReply(caption = caption, imageBytes = bytes)
-                    }
-                }.getOrNull()
-                if (geminiResult != null) {
-                    return@runCatching geminiResult
-                }
-                if (geminiImageFreeTierBlocked) break
-            }
-            throw IllegalStateException("Add a free Hugging Face token in the top-right Key menu to generate images.")
+            onStatus("GENERATING SDXL IMAGE...")
+            generateWithGradioSdxlLightning(visualPrompt, addressee)
         }
     }
 
-    private fun generateWithHuggingFace(
-        hfToken: String,
+    private fun generateWithGradioFlux(
         prompt: String,
         addressee: String
     ): GeminiImageReply {
-        val payload = JSONObject().apply {
-            put("prompt", prompt)
-            put("num_inference_steps", 4)
+        val dataArr = JSONArray().apply {
+            put(prompt)
+            put(0)
+            put(true)
+            put(768)
+            put(768)
+            put(4)
         }
-        val request = Request.Builder()
-            .url(HF_FLUX_ENDPOINT)
-            .addHeader("Authorization", "Bearer $hfToken")
+        val payload = JSONObject().apply {
+            put("data", dataArr)
+        }
+        val postReq = Request.Builder()
+            .url(GRADIO_FLUX_ENDPOINT)
             .addHeader("Content-Type", "application/json")
             .post(payload.toString().toRequestBody(jsonMediaType))
             .build()
 
-        Log.d("JARVIS", "Generating image via Hugging Face fal-ai FLUX.1-schnell")
-        httpClient.newCall(request).execute().use { response ->
-            val rawBody = response.body?.string().orEmpty()
-            if (!response.isSuccessful) {
-                val errMsg = runCatching {
-                    val obj = JSONObject(rawBody)
-                    obj.optString("error").ifBlank { obj.optString("message") }
-                }.getOrNull()?.takeIf { it.isNotBlank() }
-                throw IllegalStateException(
-                    errMsg ?: "Hugging Face error (${response.code})."
-                )
+        val eventId = httpClient.newCall(postReq).execute().use { resp ->
+            val raw = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) {
+                throw IllegalStateException("Image queue error (${resp.code}).")
             }
+            JSONObject(raw).optString("event_id").takeIf { it.isNotBlank() }
+                ?: throw IllegalStateException("No event ID returned from image space.")
+        }
 
-            val root = JSONObject(rawBody)
-            val imgUrl = root.optJSONArray("images")
-                ?.optJSONObject(0)
-                ?.optString("url")
-                ?.takeIf { it.isNotBlank() }
-                ?: throw IllegalStateException("No image URL returned from Hugging Face.")
+        val sseReq = Request.Builder()
+            .url("$GRADIO_FLUX_ENDPOINT/$eventId")
+            .get()
+            .build()
 
-            val dlReq = Request.Builder().url(imgUrl).get().build()
-            httpClient.newCall(dlReq).execute().use { dlResp ->
-                val bytes = dlResp.body?.bytes()
-                if (!dlResp.isSuccessful || bytes == null || bytes.isEmpty()) {
-                    throw IllegalStateException("Failed to download generated image (${dlResp.code}).")
-                }
-                return GeminiImageReply(
-                    caption = "Here is the generated image, $addressee.",
-                    imageBytes = bytes
-                )
+        val sseText = httpClient.newCall(sseReq).execute().use { resp ->
+            if (!resp.isSuccessful) {
+                throw IllegalStateException("Image stream error (${resp.code}).")
             }
+            resp.body?.string().orEmpty()
+        }
+
+        val dataLine = sseText.lines().lastOrNull { it.startsWith("data:") }
+            ?.removePrefix("data:")
+            ?.trim()
+            ?: throw IllegalStateException("Image generation failed or timed out.")
+
+        val arr = JSONArray(dataLine)
+        val imgUrl = arr.optJSONObject(0)?.optString("url")?.takeIf { it.isNotBlank() }
+            ?: throw IllegalStateException("No image URL in response.")
+
+        val dlReq = Request.Builder().url(imgUrl).get().build()
+        httpClient.newCall(dlReq).execute().use { dlResp ->
+            val bytes = dlResp.body?.bytes()
+            if (!dlResp.isSuccessful || bytes == null || bytes.isEmpty()) {
+                throw IllegalStateException("Failed to download generated image (${dlResp.code}).")
+            }
+            return GeminiImageReply(
+                caption = "Here is the generated image, $addressee.",
+                imageBytes = bytes
+            )
+        }
+    }
+
+    private fun generateWithGradioSd35(prompt: String, addressee: String): GeminiImageReply {
+        val dataArr = JSONArray().apply {
+            put(prompt)
+            put("")
+            put(0)
+            put(true)
+            put(768)
+            put(768)
+            put(4.5)
+            put(28)
+        }
+        return callGradioSpace(GRADIO_SD35_ENDPOINT, dataArr, addressee)
+    }
+
+    private fun generateWithGradioSdxlLightning(prompt: String, addressee: String): GeminiImageReply {
+        val dataArr = JSONArray().apply {
+            put(prompt)
+            put("4-Step")
+        }
+        return callGradioSpace(GRADIO_SDXL_LIGHTNING_ENDPOINT, dataArr, addressee)
+    }
+
+    private fun callGradioSpace(
+        endpoint: String,
+        dataArr: JSONArray,
+        addressee: String
+    ): GeminiImageReply {
+        val payload = JSONObject().apply { put("data", dataArr) }
+        val postReq = Request.Builder()
+            .url(endpoint)
+            .addHeader("Content-Type", "application/json")
+            .post(payload.toString().toRequestBody(jsonMediaType))
+            .build()
+
+        val eventId = httpClient.newCall(postReq).execute().use { resp ->
+            val raw = resp.body?.string().orEmpty()
+            if (!resp.isSuccessful) {
+                throw IllegalStateException("Image queue error (${resp.code}).")
+            }
+            JSONObject(raw).optString("event_id").takeIf { it.isNotBlank() }
+                ?: throw IllegalStateException("No event ID returned.")
+        }
+
+        val sseReq = Request.Builder().url("$endpoint/$eventId").get().build()
+        val sseText = httpClient.newCall(sseReq).execute().use { resp ->
+            if (!resp.isSuccessful) {
+                throw IllegalStateException("Image stream error (${resp.code}).")
+            }
+            resp.body?.string().orEmpty()
+        }
+
+        if (sseText.contains("event: error")) {
+            throw IllegalStateException("Space quota reached. Please try again later.")
+        }
+
+        val dataLine = sseText.lines().lastOrNull { it.startsWith("data:") }
+            ?.removePrefix("data:")
+            ?.trim()
+            ?: throw IllegalStateException("Image generation failed.")
+
+        val arr = JSONArray(dataLine)
+        val imgUrl = arr.optJSONObject(0)?.optString("url")?.takeIf { it.isNotBlank() }
+            ?: throw IllegalStateException("No image URL in response.")
+
+        val dlReq = Request.Builder().url(imgUrl).get().build()
+        httpClient.newCall(dlReq).execute().use { dlResp ->
+            val bytes = dlResp.body?.bytes()
+            if (!dlResp.isSuccessful || bytes == null || bytes.isEmpty()) {
+                throw IllegalStateException("Failed to download generated image (${dlResp.code}).")
+            }
+            return GeminiImageReply(
+                caption = "Here is the generated image, $addressee.",
+                imageBytes = bytes
+            )
         }
     }
 
@@ -471,8 +520,12 @@ class GeminiClient {
     companion object {
         private const val INTERACTIONS_ENDPOINT =
             "https://generativelanguage.googleapis.com/v1beta/interactions"
-        private const val HF_FLUX_ENDPOINT =
-            "https://router.huggingface.co/fal-ai/fal-ai/flux/schnell"
+        private const val GRADIO_FLUX_ENDPOINT =
+            "https://black-forest-labs-flux-1-schnell.hf.space/gradio_api/call/infer"
+        private const val GRADIO_SD35_ENDPOINT =
+            "https://stabilityai-stable-diffusion-3-5-large.hf.space/gradio_api/call/infer"
+        private const val GRADIO_SDXL_LIGHTNING_ENDPOINT =
+            "https://bytedance-sdxl-lightning.hf.space/call/generate_image"
         private val MODEL_CANDIDATES = listOf("gemini-3.5-flash-lite", "gemini-3.8-flash")
         private val IMAGE_MODEL_CANDIDATES = listOf(
             "gemini-nano-banana-2.1",

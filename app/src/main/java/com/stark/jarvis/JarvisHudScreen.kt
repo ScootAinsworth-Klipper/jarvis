@@ -386,12 +386,11 @@ fun JarvisHudScreen(viewModel: JarvisViewModel) {
         ApiKeyDialog(
             currentUserName = state.userName,
             currentKey = state.apiKey,
-            currentHfToken = state.hfToken,
             currentGithubToken = state.githubToken,
             currentSpeakGreeting = state.speakGreetingOnLaunch,
             onDismiss = { showKeyDialog = false },
-            onSave = { newName, newKey, newHfToken, newToken, newSpeakGreeting ->
-                viewModel.updateCredentials(newName, newKey, newHfToken, newToken, newSpeakGreeting)
+            onSave = { newName, newKey, newToken, newSpeakGreeting ->
+                viewModel.updateCredentials(newName, newKey, newToken, newSpeakGreeting)
                 showKeyDialog = false
             }
         )
@@ -856,15 +855,13 @@ private fun ChatHistoryDialog(
 private fun ApiKeyDialog(
     currentUserName: String,
     currentKey: String,
-    currentHfToken: String,
     currentGithubToken: String,
     currentSpeakGreeting: Boolean,
     onDismiss: () -> Unit,
-    onSave: (String, String, String, String, Boolean) -> Unit
+    onSave: (String, String, String, Boolean) -> Unit
 ) {
     var draftName by remember(currentUserName) { mutableStateOf(currentUserName) }
     var draftKey by remember(currentKey) { mutableStateOf(currentKey) }
-    var draftHf by remember(currentHfToken) { mutableStateOf(currentHfToken) }
     var draftToken by remember(currentGithubToken) { mutableStateOf(currentGithubToken) }
     var draftSpeakGreeting by remember(currentSpeakGreeting) { mutableStateOf(currentSpeakGreeting) }
 
@@ -939,21 +936,6 @@ private fun ApiKeyDialog(
                 )
                 Spacer(modifier = Modifier.height(10.dp))
                 OutlinedTextField(
-                    value = draftHf,
-                    onValueChange = { draftHf = it },
-                    label = { Text("Hugging Face Token (Images)", color = HudCyan) },
-                    placeholder = { Text("hf_...", color = HudCyan.copy(alpha = 0.45f)) },
-                    singleLine = true,
-                    visualTransformation = PasswordVisualTransformation(),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedTextColor = HudText,
-                        unfocusedTextColor = HudText,
-                        focusedBorderColor = HudCyan,
-                        unfocusedBorderColor = HudCyanDim
-                    )
-                )
-                Spacer(modifier = Modifier.height(10.dp))
-                OutlinedTextField(
                     value = draftToken,
                     onValueChange = { draftToken = it },
                     label = { Text("GitHub Token (Updates)", color = HudCyan) },
@@ -970,7 +952,7 @@ private fun ApiKeyDialog(
         },
         confirmButton = {
             Button(
-                onClick = { onSave(draftName, draftKey, draftHf, draftToken, draftSpeakGreeting) },
+                onClick = { onSave(draftName, draftKey, draftToken, draftSpeakGreeting) },
                 colors = ButtonDefaults.buttonColors(containerColor = HudCyan, contentColor = HudBg)
             ) {
                 Text("SAVE", fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
