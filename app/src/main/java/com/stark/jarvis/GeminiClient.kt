@@ -217,7 +217,8 @@ class GeminiClient {
         addressee: String
     ): GeminiImageReply {
         val payload = JSONObject().apply {
-            put("inputs", prompt)
+            put("prompt", prompt)
+            put("num_inference_steps", 4)
         }
         val request = Request.Builder()
             .url(HF_FLUX_ENDPOINT)
@@ -226,26 +227,31 @@ class GeminiClient {
             .post(payload.toString().toRequestBody(jsonMediaType))
             .build()
 
-        for (attempt in 0 until 2) {
-            Log.d("JARVIS", "Generating image via Hugging Face FLUX.1-schnell (attempt ${attempt + 1})")
-            httpClient.newCall(request).execute().use { response ->
-                if (response.code == 503 && attempt == 0) {
-                    // Model cold-starting on HF; wait briefly and retry once
-                    Thread.sleep(5000L)
-                    return@use
-                }
-                if (!response.isSuccessful) {
-                    val errBody = response.body?.string().orEmpty()
-                    val errMsg = runCatching {
-                        JSONObject(errBody).optString("error")
-                    }.getOrNull()?.takeIf { it.isNotBlank() }
-                    throw IllegalStateException(
-                        errMsg ?: "Hugging Face error (${response.code}). Check your token or accept FLUX.1-schnell terms."
-                    )
-                }
-                val bytes = response.body?.bytes()
-                if (bytes == null || bytes.isEmpty()) {
-                    throw IllegalStateException("Received an empty image from Hugging Face.")
+        Log.d("JARVIS", "Generating image via Hugging Face fal-ai FLUX.1-schnell")
+        httpClient.newCall(request).execute().use { response ->
+            val rawBody = response.body?.string().orEmpty()
+            if (!response.isSuccessful) {
+                val errMsg = runCatching {
+                    val obj = JSONObject(rawBody)
+                    obj.optString("error").ifBlank { obj.optString("message") }
+                }.getOrNull()?.takeIf { it.isNotBlank() }
+                throw IllegalStateException(
+                    errMsg ?: "Hugging Face error (${response.code})."
+                )
+            }
+
+            val root = JSONObject(rawBody)
+            val imgUrl = root.optJSONArray("images")
+                ?.optJSONObject(0)
+                ?.optString("url")
+                ?.takeIf { it.isNotBlank() }
+                ?: throw IllegalStateException("No image URL returned from Hugging Face.")
+
+            val dlReq = Request.Builder().url(imgUrl).get().build()
+            httpClient.newCall(dlReq).execute().use { dlResp ->
+                val bytes = dlResp.body?.bytes()
+                if (!dlResp.isSuccessful || bytes == null || bytes.isEmpty()) {
+                    throw IllegalStateException("Failed to download generated image (${dlResp.code}).")
                 }
                 return GeminiImageReply(
                     caption = "Here is the generated image, $addressee.",
@@ -253,7 +259,6 @@ class GeminiClient {
                 )
             }
         }
-        throw IllegalStateException("Hugging Face image model is warming up. Please try again.")
     }
 
     private suspend fun refineImagePrompt(apiKey: String, rawPrompt: String): String {
@@ -467,7 +472,7 @@ class GeminiClient {
         private const val INTERACTIONS_ENDPOINT =
             "https://generativelanguage.googleapis.com/v1beta/interactions"
         private const val HF_FLUX_ENDPOINT =
-            "https://router.huggingface.co/hf-inference/models/black-forest-labs/FLUX.1-schnell"
+            "https://router.huggingface.co/fal-ai/fal-ai/flux/schnell"
         private val MODEL_CANDIDATES = listOf("gemini-3.5-flash-lite", "gemini-3.8-flash")
         private val IMAGE_MODEL_CANDIDATES = listOf(
             "gemini-nano-banana-2.1",
