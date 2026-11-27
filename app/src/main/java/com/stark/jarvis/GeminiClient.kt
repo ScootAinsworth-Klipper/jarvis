@@ -150,12 +150,14 @@ class GeminiClient {
         runCatching {
             val trimmedKey = apiKey.trim()
             val addressee = userName.trim().ifBlank { "Sir" }
+            val visualPrompt = refineImagePrompt(trimmedKey, prompt)
+            Log.d("JARVIS", "Refined image prompt: '$visualPrompt'")
 
             if (trimmedKey.isNotEmpty()) {
                 for (modelName in IMAGE_MODEL_CANDIDATES) {
                     val payload = JSONObject().apply {
                         put("model", modelName)
-                        put("input", prompt)
+                        put("input", visualPrompt)
                     }
 
                     val request = Request.Builder()
@@ -190,14 +192,43 @@ class GeminiClient {
             }
 
             // Free fallback 1: Pollinations (fast when available)
-            val pollinationsResult = runCatching { generateWithPollinations(prompt, addressee) }.getOrNull()
+            val pollinationsResult = runCatching { generateWithPollinations(visualPrompt, addressee) }.getOrNull()
             if (pollinationsResult != null) {
                 return@runCatching pollinationsResult
             }
 
             // Free fallback 2: AI Horde community GPU network (no 402 IP limit)
-            generateWithAiHorde(prompt, addressee)
+            generateWithAiHorde(visualPrompt, addressee)
         }
+    }
+
+    private suspend fun refineImagePrompt(apiKey: String, rawPrompt: String): String {
+        val instruction =
+            "Rewrite the user's request into a single concise, vivid image-generation prompt (max 30 words). " +
+                "Remove command words like 'draw' or 'generate an image of'. Describe the full subject clearly with realistic visual details. Output ONLY the prompt."
+        val refined = runCatching {
+            if (apiKey.isNotEmpty()) {
+                val payload = JSONObject().apply {
+                    put("model", "gemini-3.5-flash-lite")
+                    put("system_instruction", instruction)
+                    put("input", rawPrompt)
+                }
+                val req = Request.Builder()
+                    .url(INTERACTIONS_ENDPOINT)
+                    .addHeader("x-goog-api-key", apiKey)
+                    .addHeader("Content-Type", "application/json")
+                    .post(payload.toString().toRequestBody(jsonMediaType))
+                    .build()
+                httpClient.newCall(req).execute().use { resp ->
+                    if (resp.isSuccessful) {
+                        extractReplyText(JSONObject(resp.body?.string().orEmpty()))
+                    } else ""
+                }
+            } else {
+                sendViaPollinations(instruction, rawPrompt, emptyList()).text
+            }
+        }.getOrDefault("")
+        return refined.trim().ifBlank { rawPrompt }
     }
 
     private fun generateWithPollinations(prompt: String, addressee: String): GeminiImageReply {
@@ -237,8 +268,8 @@ class GeminiClient {
                 put("SDXL 1.0")
             })
             put("params", JSONObject().apply {
-                put("width", 1024)
-                put("height", 1024)
+                put("width", 768)
+                put("height", 768)
                 put("steps", 25)
                 put("cfg_scale", 7.0)
                 put("sampler_name", "k_dpmpp_2m")
