@@ -507,30 +507,13 @@ class JarvisViewModel(application: Application) : AndroidViewModel(application) 
         viewModelScope.launch {
             val useNano = _uiState.value.useOnDeviceNano
             if (wantsImage) {
-                if (useNano) {
-                    _isThinking.value = false
-                    val msg = "Apologies, $name. Image generation requires Cloud API mode. Please switch from NANO to CLOUD API in the top bar."
-                    _uiState.update {
-                        it.copy(
-                            messages = it.messages + HudMessage(
-                                id = ++messageCounter,
-                                isUser = false,
-                                text = msg
-                            )
-                        )
-                    }
-                    persistCurrentChatIfNeeded()
-                    if (_uiState.value.autoSpeak) voiceManager.speak(msg)
-                    return@launch
-                }
-
-                _nanoStatus.value = "SYNTHESIZING IMAGE // GEMINI CORE"
+                _nanoStatus.value = "SYNTHESIZING IMAGE..."
                 val imgResult = geminiClient.generateImage(
-                    apiKey = _uiState.value.apiKey,
+                    apiKey = if (useNano) "" else _uiState.value.apiKey,
                     prompt = clean,
                     userName = name
                 )
-                _nanoStatus.value = null
+                _nanoStatus.value = if (useNano) "NANO READY // AWAITING COMMAND" else null
                 _isThinking.value = false
 
                 imgResult.onSuccess { imgReply ->

@@ -12,6 +12,7 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.net.Inet4Address
 import java.net.InetAddress
+import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 
 data class GeminiReply(
@@ -119,62 +120,73 @@ class GeminiClient {
     ): Result<GeminiImageReply> = withContext(Dispatchers.IO) {
         runCatching {
             val trimmedKey = apiKey.trim()
-            require(trimmedKey.isNotEmpty()) {
-                "Gemini API key is not configured. Tap the settings icon in the top-right corner to add your key."
-            }
             val addressee = userName.trim().ifBlank { "Sir" }
 
-            var lastError: Exception? = null
-            for (modelName in IMAGE_MODEL_CANDIDATES) {
-                val payload = JSONObject().apply {
-                    put("model", modelName)
-                    put("input", prompt)
-                }
-
-                val request = Request.Builder()
-                    .url(INTERACTIONS_ENDPOINT)
-                    .addHeader("x-goog-api-key", trimmedKey)
-                    .addHeader("Content-Type", "application/json")
-                    .post(payload.toString().toRequestBody(jsonMediaType))
-                    .build()
-
-                Log.d("JARVIS", "Generating image with $modelName")
-                httpClient.newCall(request).execute().use { response ->
-                    val rawBody = response.body?.string().orEmpty()
-                    Log.d("JARVIS", "Gemini Image HTTP ${response.code} ($modelName), bodyLen=${rawBody.length}")
-                    if (response.code == 404 || response.code == 503 || response.code == 429) {
-                        val apiMsg = runCatching {
-                            JSONObject(rawBody).optJSONObject("error")?.optString("message")
-                        }.getOrNull()
-                        lastError = IllegalStateException(
-                            apiMsg?.takeIf { it.isNotBlank() }
-                                ?: "Gemini Image error (${response.code})"
-                        )
-                        return@use
-                    }
-                    if (!response.isSuccessful) {
-                        val apiMsg = runCatching {
-                            JSONObject(rawBody).optJSONObject("error")?.optString("message")
-                        }.getOrNull()
-                        throw IllegalStateException(
-                            apiMsg?.takeIf { it.isNotBlank() }
-                                ?: "Gemini Image error (${response.code}): ${rawBody.take(180)}"
-                        )
+            if (trimmedKey.isNotEmpty()) {
+                for (modelName in IMAGE_MODEL_CANDIDATES) {
+                    val payload = JSONObject().apply {
+                        put("model", modelName)
+                        put("input", prompt)
                     }
 
-                    val root = JSONObject(rawBody)
-                    val base64Data = extractImageBase64(root)
-                    if (base64Data.isBlank()) {
-                        throw IllegalStateException("No image data returned from Gemini.")
+                    val request = Request.Builder()
+                        .url(INTERACTIONS_ENDPOINT)
+                        .addHeader("x-goog-api-key", trimmedKey)
+                        .addHeader("Content-Type", "application/json")
+                        .post(payload.toString().toRequestBody(jsonMediaType))
+                        .build()
+
+                    Log.d("JARVIS", "Generating image with $modelName")
+                    val geminiResult = runCatching {
+                        httpClient.newCall(request).execute().use { response ->
+                            val rawBody = response.body?.string().orEmpty()
+                            Log.d("JARVIS", "Gemini Image HTTP ${response.code} ($modelName), bodyLen=${rawBody.length}")
+                            if (!response.isSuccessful) {
+                                return@use null
+                            }
+                            val root = JSONObject(rawBody)
+                            val base64Data = extractImageBase64(root)
+                            if (base64Data.isBlank()) return@use null
+                            val bytes = Base64.decode(base64Data, Base64.DEFAULT)
+                            val caption = extractReplyText(root).ifBlank {
+                                "Here is the generated image, $addressee."
+                            }
+                            GeminiImageReply(caption = caption, imageBytes = bytes)
+                        }
+                    }.getOrNull()
+                    if (geminiResult != null) {
+                        return@runCatching geminiResult
                     }
-                    val bytes = Base64.decode(base64Data, Base64.DEFAULT)
-                    val caption = extractReplyText(root).ifBlank {
-                        "Here is the generated image, $addressee."
-                    }
-                    return@runCatching GeminiImageReply(caption = caption, imageBytes = bytes)
                 }
             }
-            throw (lastError ?: IllegalStateException("Image generation models are currently unavailable."))
+
+            // Free fallback (works on Free Tier Gemini keys and NANO mode with no key)
+            generateWithPollinations(prompt, addressee)
+        }
+    }
+
+    private fun generateWithPollinations(prompt: String, addressee: String): GeminiImageReply {
+        val encoded = URLEncoder.encode(prompt, "UTF-8").replace("+", "%20")
+        val url = "https://image.pollinations.ai/prompt/$encoded?width=768&height=768&nologo=true"
+        Log.d("JARVIS", "Generating image via free Pollinations endpoint")
+        val request = Request.Builder()
+            .url(url)
+            .addHeader("User-Agent", "JARVIS-Android")
+            .get()
+            .build()
+        httpClient.newCall(request).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw IllegalStateException("Image service returned HTTP ${response.code}.")
+            }
+            val bytes = response.body?.bytes()
+                ?: throw IllegalStateException("Empty image response.")
+            if (bytes.isEmpty()) {
+                throw IllegalStateException("Received 0 image bytes.")
+            }
+            return GeminiImageReply(
+                caption = "Here is the generated image, $addressee.",
+                imageBytes = bytes
+            )
         }
     }
 
